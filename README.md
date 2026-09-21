@@ -161,6 +161,16 @@ cp .env.example .env            # defaults are safe for local use
 docker compose up --build       # first build takes a few minutes
 ```
 
+If a build stops with `apk add ... tini: tini (no such package)`,
+`v2 database format error` or `DNS: transient error`, the build container could not
+reach a package CDN - that is the local Docker network, not the code. Set a working
+resolver in Docker Desktop (Settings → Resources → Network → DNS server, e.g.
+`1.1.1.1, 8.8.8.8`), remove any custom registry mirror or proxy that cannot reach
+`deb.debian.org`/`dl-cdn.alpinelinux.org`, update Docker Desktop, then rerun
+`docker compose build --pull`. `No matching distribution found for <package>` is a
+different class of error: a requirements file lists a package PyPI does not know
+about. See [Build and deployment runbook](docs/BUILD_AND_DEPLOY.md).
+
 Endpoints once everything is healthy:
 
 | URL | Purpose |

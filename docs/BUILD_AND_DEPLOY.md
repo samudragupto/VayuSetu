@@ -54,9 +54,14 @@ integration (HTTP 403), so no variable values were inspected or changed.
 - `requirements-dev.txt` includes the common manifest; CI uses the same constraints
   and runs `pip check`. Production function staging already merges the common
   manifest into the uploaded `requirements.txt` and is covered by regression tests.
-- Both Dockerfiles install build-essential, upgrade pip/setuptools/wheel, prefer
+- Both Dockerfiles install build-essential, ensure `setuptools`/`wheel`, prefer
   wheels, install common requirements first, and constrain the later installation.
   The prediction image retains `libgomp1` for XGBoost at runtime.
+- Neither Python Dockerfile runs `pip install --upgrade pip`. Upgrading pip inside a
+  build layer pulls an unpinned tool and forces a second full resolution pass, which
+  is how one bad line in a requirements file becomes a long, confusing failure that
+  looks like a network problem. The interpreter images ship a pip that resolves this
+  stack correctly.
 - There is no final loose `functions-framework>=3.8,<4` install. The exact pin
   is already installed; the FastAPI prediction service does not need the framework.
 - Function-specific build arguments are declared after the shared layers, so all
@@ -116,6 +121,66 @@ curl --fail http://localhost:8081/healthz
 
 Function endpoints consume POST/CloudEvent payloads; a browser GET returning 400 or
 405 is not a dependency failure. Follow the local simulation commands in README.
+
+## Base images and build-network troubleshooting
+
+Build failures in this stack are usually the build container's network, not the
+Dockerfiles. Two signatures seen on a Windows/Docker Desktop checkout:
+
+```
+WARNING: fetching https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/APKINDEX.tar.gz: DNS: transient error (try again later)
+ERROR: unable to select packages:
+  tini (no such package):
+    required by: world[tini]
+```
+
+```
+WARNING: fetching .../v3.23/community/x86_64/APKINDEX.tar.gz: v2 database format error
+```
+
+Both mean the same thing: `apk` could not load a package index, so it reported the
+requested package as nonexistent. Alpine 3.21+ publishes APKINDEX in the new v2
+format, which older `apk-tools` in Docker Desktop's VM cannot always parse, and a
+registry mirror or flaky resolver turns the rest into `DNS: transient error`.
+
+Fixes, in order of preference:
+
+1. Update Docker Desktop (Settings → General → *Check for updates*). Newer builds
+   ship an `apk-tools` that reads the v2 index, and any `node:20-alpine` image
+   cached from an older pull should be refreshed with `docker compose build --pull`.
+2. Give containers a resolver that works off the corporate/VPN network:
+   Docker Desktop → Settings → Resources → Network → *DNS server* → `1.1.1.1, 8.8.8.8`.
+   The same value in the Docker Engine JSON tab is `{"dns": ["1.1.1.1", "8.8.8.8"]}`.
+3. If a registry mirror is configured for Docker Hub, remove it (or add
+   `https://index.docker.io/1.1/` as a fallback) in Docker Engine settings; broken
+   mirrors cause the slow layer downloads that turn into DNS timeouts.
+4. If a proxy is set on the Docker Desktop *Resources → Proxies* page, the build
+   container uses it for every CDN. A proxy that cannot reach
+   `dl-cdn.alpinelinux.org` or `deb.debian.org` fails exactly like the above.
+
+**The repository no longer depends on runtime package installs in the API gateway
+image**: the gateway moved from `node:20-alpine` to `node:20-bookworm-slim` and the
+`apk add tini` layer was dropped, so a rebuild of `api-gateway` now only needs the
+base image and `npm`. The Debian base is also the one the local Firebase emulator
+image already downloads, so the two builds share the layer cache. Signal handling is
+unchanged: `docker compose` delivers `SIGTERM`/`SIGINT` straight to the Node process,
+which installs handlers for both, and Cloud Run's sandbox reaps orphans itself.
+
+A third failure mode, `No matching distribution found for <package>`, is not network
+related: it means a requirements file lists a package that does not exist on PyPI.
+`functions/common/requirements.txt` is vendored into every function image and into
+`requirements-dev.txt`, so a stray local edit there breaks all four function builds
+at once. Recover with a clean copy and verify:
+
+```bash
+git checkout -- functions/common/requirements.txt
+# every pin below must exist on PyPI, e.g.:
+python -c "import json,urllib.request as u; d=json.load(u.urlopen('https://pypi.org/pypi/protobuf/json')); print('4.25.3' in d['releases'])"
+```
+
+After changing `functions/common/requirements.txt`, rebuild every Python image -
+the common layer is shared, so a partially cached stack mixes old and new SDKs and
+`pip check` in the image is what surfaces it.
 
 ## Unblock all eight cloud deployments
 
