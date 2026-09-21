@@ -36,6 +36,12 @@ x-twilio-env: &twilio-env
 services:
   firebase:
     build: ./local/firebase
+    # The repository root is mounted at /workspace, so the entrypoint that runs is
+    # the working-copy file, not the one baked into the image. `sed -i 's/\r$//'`
+    # makes that immune to a Windows checkout that stored CRLF (`.gitattributes`
+    # prevents it); once `git ls-files --eol local/firebase/entrypoint.sh` reports
+    # `i/lf w/lf` the sed is a no-op.
+    command: ["sh", "-c", "sed -i 's/\r$//' /workspace/local/firebase/entrypoint.sh && exec /usr/local/bin/entrypoint.sh"]
     environment:
       GCLOUD_PROJECT: ${LOCAL_PROJECT_ID:-vayusetu-local}
       PROCESS_IMAGE_URL: http://fn-process-image:8080

@@ -180,6 +180,10 @@ not the code. Three signatures and what they mean:
   ```
 - `No matching distribution found for <package>` → a requirements file lists a
   package PyPI does not know; that one is a real repo problem.
+- A container exiting 127 with `/usr/bin/env: 'bash': No such file or directory`
+  → Git wrote CRLF into a shell script at checkout. `.gitattributes` now pins LF;
+  fix a stale working copy with `git add --renormalize .` then
+  `git restore local/firebase/entrypoint.sh`.
 
 Details, recovery commands and the shared-layer caveats:
 [Build and deployment runbook](docs/BUILD_AND_DEPLOY.md).

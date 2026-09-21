@@ -17,7 +17,13 @@ RUN apt-get update -o Acquire::Retries=3 \
 
 WORKDIR /workspace
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Belt and braces for Windows checkouts: a CRLF copy of this script (the
+# repository root is mounted over /workspace, so the mounted file is what
+# actually runs) fails as `/usr/bin/env: 'bash\r': No such file or directory`.
+# .gitattributes pins the endings, and this strips any stray CR anyway.
+RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh \
+    && chmod +x /usr/local/bin/entrypoint.sh
 
 EXPOSE 4000 4400 4500 5000 5001 8080 9099 9150 9199 9299
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

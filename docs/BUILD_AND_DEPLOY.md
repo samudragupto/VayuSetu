@@ -229,6 +229,32 @@ successful classic build, BuildKit's own cache is still empty, so avoid
 when you do upgrade a base image, use `docker compose build --pull` on a healthy
 network rather than pruning the whole builder.
 
+### CRLF line endings: `/usr/bin/env: 'bash': No such file or directory`
+
+A container that exits instantly with code 127 and that message - and the failing
+line being a script's shebang - is Git's `core.autocrlf=true` rewriting LF to CRLF at
+checkout on Windows, not an image problem. The repository stores LF (verified: no
+tracked file contains a CR) and `.editorconfig` asks editors for LF, but neither
+applies at checkout time; `.gitattributes` (`* text=auto eol=lf`) does.
+
+```powershell
+git ls-files --eol local/firebase/entrypoint.sh   # expect `i/lf w/lf`; `w/crlf` is the bug
+git add --renormalize .                            # store the normalised endings
+git commit -m "chore: normalise line endings via .gitattributes"
+# force the working copy to be rewritten:
+del local\firebase\entrypoint.sh
+git restore local/firebase/entrypoint.sh
+grep -c ([char]13) local/firebase/entrypoint.sh    # 0 once fixed
+```
+
+The stack is additionally defended at two points: `local/firebase/Dockerfile`
+strips CR from its copy, and the Compose `firebase` service `command` runs
+`sed -i 's/\r$//' /workspace/local/firebase/entrypoint.sh` first, because the
+repository root is bind-mounted over the image's copy - a stale CRLF working file
+would otherwise win. Both are no-ops on a clean checkout. Any other script mounted
+into a container is equally affected; if it is invoked as `bash file.sh`, prefer
+`sh file.sh`-tolerant syntax or strip CR at the call site.
+
 **The repository no longer depends on runtime package installs in the API gateway
 image**: the gateway moved from `node:20-alpine` to `node:20-bookworm-slim` and the
 `apk add tini` layer was dropped, so a rebuild of `api-gateway` now only needs the
