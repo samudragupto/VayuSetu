@@ -1,0 +1,17 @@
+{
+  "name": "@vayusetu/event-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local emulator bridge that forwards Firestore and Storage events to the Python Cloud Functions as CloudEvents",
+  "license": "Apache-2.0",
+  "type": "commonjs",
+  "main": "index.js",
+  "engines": { "node": "20" },
+  "scripts": {
+    "start": "echo 'Run through the Firebase emulator: firebase emulators:start'"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.7.0",
+    "firebase-functions": "^6.1.1"
+  }
+}

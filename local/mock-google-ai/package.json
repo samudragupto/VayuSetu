@@ -1,0 +1,16 @@
+{
+  "name": "@vayusetu/mock-google-ai",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local stand-in for the Google AI Studio (Gemini) generateContent REST API",
+  "license": "Apache-2.0",
+  "type": "commonjs",
+  "main": "server.js",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}

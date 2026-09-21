@@ -113,10 +113,10 @@ jobs:
       - name: Install Firebase CLI
         run: npm install --global firebase-tools@13
 
-      - name: Deploy Firestore rules and indexes
+      - name: Deploy Firestore security rules
         run: |
           firebase deploy \
-            --only firestore:rules,firestore:indexes \
+            --only firestore:rules \
             --project "${{ vars.GCP_PROJECT_ID }}" \
             --non-interactive \
             --force

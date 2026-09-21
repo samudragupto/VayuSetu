@@ -80,3 +80,7 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# Local emulator state
+local/firebase/data/*
+!local/firebase/data/.gitkeep

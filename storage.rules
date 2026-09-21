@@ -1,0 +1,11 @@
+rules_version = '2';
+
+// Citizen images and alert audio are written and read exclusively by backend
+// service accounts. No browser access is permitted.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

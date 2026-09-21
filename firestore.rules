@@ -1,0 +1,82 @@
+rules_version = '2';
+
+// VayuSetu Firestore security rules.
+//
+// All writes are performed by backend services using the Admin SDK, which
+// bypasses these rules. Browser clients (the authority dashboard) receive
+// read-only access to operational collections, restricted to verified Google
+// accounts whose e-mail domain (or exact address) is listed in the
+// config/access document. Citizen identity data (users collection) is never
+// readable from clients.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function accessConfig() {
+      return get(/databases/$(database)/documents/config/access).data;
+    }
+
+    function emailDomain() {
+      return request.auth.token.email.lower().split('@')[1];
+    }
+
+    function isVerifiedGoogleUser() {
+      return request.auth != null
+        && request.auth.token.email != null
+        && request.auth.token.email_verified == true
+        && (request.auth.token.firebase.sign_in_provider == 'google.com'
+            || request.auth.token.firebase.sign_in_provider == 'password');
+    }
+
+    function isAdmin() {
+      return isVerifiedGoogleUser()
+        && exists(/databases/$(database)/documents/config/access)
+        && (
+          (accessConfig().keys().hasAny(['adminDomains']) && emailDomain() in accessConfig().adminDomains)
+          || (accessConfig().keys().hasAny(['adminEmails']) && request.auth.token.email.lower() in accessConfig().adminEmails)
+        );
+    }
+
+    match /config/access {
+      allow read: if isVerifiedGoogleUser();
+      allow write: if false;
+    }
+
+    match /citizen_reports/{reportId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /predicted_hotspots/{hotspotId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /alert_log/{alertId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /authorities/{authorityId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /batch_runs/{runId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // Pseudonymous citizen profiles contain phone numbers: backend only.
+    match /users/{userId} {
+      allow read, write: if false;
+    }
+
+    match /webhook_events/{eventId} {
+      allow read, write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

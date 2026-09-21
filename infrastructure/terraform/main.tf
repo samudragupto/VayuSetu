@@ -378,6 +378,32 @@ resource "google_firestore_index" "alert_log_by_hotspot" {
   }
 }
 
+# Access control document consumed by the Firestore security rules and the
+# dashboard. Additional administrator e-mail addresses can be appended to
+# adminEmails outside of Terraform without affecting this resource.
+resource "google_firestore_document" "access_config" {
+  project     = var.project_id
+  database    = google_firestore_database.default.name
+  collection  = "config"
+  document_id = "access"
+
+  fields = jsonencode({
+    adminDomains = {
+      arrayValue = {
+        values = [for domain in split(",", var.admin_domain) : { stringValue = trimspace(domain) }]
+      }
+    }
+    adminEmails = {
+      arrayValue = { values = [] }
+    }
+    updatedBy = { stringValue = "terraform" }
+  })
+
+  lifecycle {
+    ignore_changes = [fields]
+  }
+}
+
 # Webhook idempotency records expire automatically after seven days.
 resource "google_firestore_field" "webhook_events_ttl" {
   project    = var.project_id

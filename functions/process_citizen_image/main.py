@@ -391,6 +391,9 @@ def process_citizen_image(cloud_event: CloudEvent) -> None:
     analysis_doc = analysis.to_dict()
     analysis_doc.pop("raw", None)
 
+    # Indoor or otherwise unusable scenes keep their analysis for auditing but
+    # expose no AQI signal, so dashboards and the batch predictor ignore them.
+    outdoor = bool(analysis.is_outdoor_scene)
     report_ref.set(
         {
             "status": "analyzed",
@@ -398,11 +401,12 @@ def process_citizen_image(cloud_event: CloudEvent) -> None:
             "updatedAt": firestore.SERVER_TIMESTAMP,
             "imageUri": image_uri,
             "geminiAnalysis": analysis_doc,
-            "hazeIndex": analysis.haze_index,
-            "estimatedAqi": analysis.estimated_aqi,
-            "estimatedAqiCategory": analysis.estimated_aqi_category,
-            "visibilityKm": analysis.visibility_km,
-            "pollutionSources": analysis.pollution_sources,
+            "isOutdoorScene": outdoor,
+            "hazeIndex": analysis.haze_index if outdoor else None,
+            "estimatedAqi": analysis.estimated_aqi if outdoor else None,
+            "estimatedAqiCategory": analysis.estimated_aqi_category if outdoor else "not_applicable",
+            "visibilityKm": analysis.visibility_km if outdoor else None,
+            "pollutionSources": analysis.pollution_sources if outdoor else [],
             "modelName": analysis.model_name,
             "error": firestore.DELETE_FIELD,
         },
