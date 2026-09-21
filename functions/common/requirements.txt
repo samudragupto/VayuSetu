@@ -1,5 +1,25 @@
-# Runtime dependencies of the shared vayusetu_common package. Each function
-# lists the subset it actually needs in its own requirements.txt.
-requests>=2.32,<3
-google-cloud-bigquery>=3.25,<4
-google-events>=0.14,<1
+# Shared Python 3.10 runtime requirements and constraints.
+# Install with -r; also pass -c when installing component requirements so later
+# Docker layers cannot replace these versions. Staging vendors this file's pins.
+google-api-core==2.19.1
+googleapis-common-protos==1.63.2
+google-cloud-bigquery==3.25.0
+google-cloud-firestore==2.16.1
+google-cloud-storage==2.17.0
+google-auth==2.32.0
+protobuf==4.25.3
+grpcio==1.64.1
+requests==2.32.3
+
+# Eventarc decoding and the alert function's Translation / Text-to-Speech clients.
+google-events==0.14.0
+google-cloud-translate==3.15.3
+google-cloud-texttospeech==2.16.3
+
+# Bound the shared transitive SDK dependencies to avoid resolver backtracking.
+# grpcio-status 1.64.x requires protobuf 5; 1.62.3 supports protobuf 4.
+grpcio-status==1.62.3
+proto-plus==1.24.0
+google-cloud-core==2.4.1
+google-api-python-client==2.137.0
+google-auth-httplib2==0.2.0

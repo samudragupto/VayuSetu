@@ -6,11 +6,13 @@ on:
     paths:
       - "infrastructure/terraform/**"
       - ".github/workflows/terraform.yml"
+      - "scripts/check_deploy_config.sh"
   pull_request:
     branches: [main]
     paths:
       - "infrastructure/terraform/**"
       - ".github/workflows/terraform.yml"
+      - "scripts/check_deploy_config.sh"
   workflow_dispatch:
     inputs:
       action:
@@ -65,6 +67,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Validate deployment configuration
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          ADMIN_DOMAIN: ${{ vars.ADMIN_DOMAIN }}
+        run: bash "$GITHUB_WORKSPACE/scripts/check_deploy_config.sh" terraform
 
       - name: Authenticate to Google Cloud (Workload Identity Federation)
         id: auth

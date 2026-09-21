@@ -1,0 +1,30 @@
+# Root-context Python images: never send local credentials, caches or Git history.
+.git
+.github
+.env
+.env.*
+**/.env
+**/.env.*
+.venv
+**/.venv
+**/node_modules
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+**/.next
+build
+coverage
+**/.terraform
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfplan
+**/tfplan
+**/terraform.tfvars
+**/backend.hcl
+**/service-account*.json
+**/gcp-credentials*.json
+**/gha-creds-*.json
+**/*.pem
+**/*.key
+# Do not exclude services/prediction-service/model: CI may supply a trained model.

@@ -118,6 +118,10 @@ output "github_repository_variables" {
   value = {
     GCP_PROJECT_ID                 = var.project_id
     GCP_REGION                     = var.region
+    ENVIRONMENT                    = var.environment
+    FIRESTORE_LOCATION             = var.firestore_location
+    BIGQUERY_LOCATION              = var.bigquery_location
+    API_GATEWAY_URL                = google_cloud_run_v2_service.api_gateway.uri
     GCP_WORKLOAD_IDENTITY_PROVIDER = google_iam_workload_identity_pool_provider.github.name
     GCP_DEPLOYER_SERVICE_ACCOUNT   = google_service_account.gh_deployer.email
     GCP_TERRAFORM_SERVICE_ACCOUNT  = google_service_account.gh_terraform.email
