@@ -230,6 +230,7 @@ class Dataset:
     alerts: List[Dict[str, Any]] = field(default_factory=list)
     authorities: List[Dict[str, Any]] = field(default_factory=list)
     batch_runs: List[Dict[str, Any]] = field(default_factory=list)
+    alert_state: List[Dict[str, Any]] = field(default_factory=list)
     access: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -387,13 +388,30 @@ def build_report(rng: random.Random, citizen: Citizen, when: dt.datetime, progre
     return doc
 
 
-def build_hotspots(rng: random.Random, reports: List[Dict[str, Any]], window_start: dt.datetime, window_end: dt.datetime, threshold: float, run_interval_hours: int, min_reports: int = 2) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """Simulate periodic batch prediction runs over the window."""
+def build_hotspots(
+    rng: random.Random,
+    reports: List[Dict[str, Any]],
+    window_start: dt.datetime,
+    window_end: dt.datetime,
+    threshold: float,
+    run_interval_hours: int,
+    min_reports: int = 2,
+    quiet_hours: float = 0.0,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Simulate periodic batch prediction runs over the window.
+
+    ``quiet_hours`` stops the simulated runs that many hours before the end of
+    the window and marks every above-threshold hotspot as already alerted.
+    This leaves the most recent reports unpredicted so that a live batch run
+    during a demo produces fresh hotspots that are not suppressed by the alert
+    cooldown.
+    """
     hotspots: List[Dict[str, Any]] = []
     runs: List[Dict[str, Any]] = []
     total_hours = (window_end - window_start).total_seconds() / 3600
+    last_run_time = window_end - dt.timedelta(hours=max(0.0, quiet_hours))
     run_time = window_start + dt.timedelta(hours=6)
-    while run_time <= window_end:
+    while run_time <= last_run_time:
         since = run_time - dt.timedelta(hours=6)
         recent = [r for r in reports if r["status"] == "analyzed" and r.get("estimatedAqi") is not None and since <= r["createdAt"] <= run_time]
         cells: Dict[str, List[Dict[str, Any]]] = {}
@@ -418,7 +436,7 @@ def build_hotspots(rng: random.Random, reports: List[Dict[str, Any]], window_sta
             lat = sum(r["location"]["latitude"] for r in items) / len(items)
             lon = sum(r["location"]["longitude"] for r in items) / len(items)
             above = predicted >= threshold
-            is_latest_run = run_time + dt.timedelta(hours=run_interval_hours) > window_end
+            is_latest_run = quiet_hours <= 0 and run_time + dt.timedelta(hours=run_interval_hours) > last_run_time
             alert_status = ("pending" if is_latest_run else "sent") if above else "not_required"
             features = {
                 "haze_index": round(sum(r["hazeIndex"] for r in items) / len(items), 4),
@@ -499,9 +517,11 @@ def matching_authorities(geohash: str) -> List[Dict[str, Any]]:
     return matched[:5]
 
 
-def build_alerts(rng: random.Random, hotspots: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def build_alerts(rng: random.Random, hotspots: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Return (alert_log rows, alert_state rows) for every hotspot marked as sent."""
     alerts: List[Dict[str, Any]] = []
     last_alert_by_cell: Dict[str, dt.datetime] = {}
+    state_by_cell: Dict[str, Dict[str, Any]] = {}
     for hotspot in sorted(hotspots, key=lambda h: h["generatedAt"]):
         if hotspot["alertStatus"] != "sent":
             continue
@@ -547,7 +567,13 @@ def build_alerts(rng: random.Random, hotspots: List[Dict[str, Any]]) -> List[Dic
         hotspot["alertedAt"] = hotspot["generatedAt"] + dt.timedelta(seconds=30)
         hotspot["alertLanguages"] = sorted(sent_languages)
         hotspot["alertRecipients"] = len(recipients)
-    return alerts
+        state_by_cell[hotspot["geohash"]] = {
+            "_id": hotspot["geohash"],
+            "lastAlertAt": hotspot["alertedAt"],
+            "lastPredictedAqi": hotspot["predictedAqi"],
+            "lastHotspotId": hotspot["_id"],
+        }
+    return alerts, list(state_by_cell.values())
 
 
 def build_dataset(args: argparse.Namespace) -> Dataset:
@@ -598,8 +624,17 @@ def build_dataset(args: argparse.Namespace) -> Dataset:
             "updatedAt": citizen.last_seen,
         }
 
-    dataset.hotspots, dataset.batch_runs = build_hotspots(rng, dataset.reports, window_start, window_end, args.alert_threshold, args.batch_interval_hours, args.min_reports_per_cell)
-    dataset.alerts = build_alerts(rng, dataset.hotspots)
+    dataset.hotspots, dataset.batch_runs = build_hotspots(
+        rng,
+        dataset.reports,
+        window_start,
+        window_end,
+        args.alert_threshold,
+        args.batch_interval_hours,
+        args.min_reports_per_cell,
+        args.quiet_hours,
+    )
+    dataset.alerts, dataset.alert_state = build_alerts(rng, dataset.hotspots)
     dataset.authorities = [dict(a, createdAt=window_start, updatedAt=window_start) for a in AUTHORITIES]
     dataset.access = {
         "adminDomains": [d.strip() for d in args.admin_domain.split(",") if d.strip()],
@@ -654,6 +689,7 @@ def write_dataset(dataset: Dataset, project: str, clear: bool, hotspots_last: bo
         "users": [dict(v, _id=k) for k, v in dataset.users.items()],
         "authorities": dataset.authorities,
         "alert_log": dataset.alerts,
+        "alert_state": dataset.alert_state,
         "batch_runs": dataset.batch_runs,
         "predicted_hotspots": dataset.hotspots,
     }
@@ -720,6 +756,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--citizens", type=int, default=80, help="Number of distinct citizens")
     parser.add_argument("--hours", type=int, default=48, help="Length of the simulated window in hours")
     parser.add_argument("--batch-interval-hours", type=int, default=3, help="Interval between simulated batch prediction runs")
+    parser.add_argument("--quiet-hours", type=float, default=0.0, help="Stop simulated batch runs this many hours before now and mark their alerts as sent, so a live batch run produces fresh, non-suppressed alerts (recommended: 3 for demos)")
     parser.add_argument("--min-reports-per-cell", type=int, default=2, help="Minimum analysed reports in a cell before a hotspot is generated")
     parser.add_argument("--alert-threshold", type=float, default=float(os.environ.get("ALERT_AQI_THRESHOLD", 300)))
     parser.add_argument("--bucket", default=os.environ.get("CITIZEN_IMAGES_BUCKET", "vayusetu-local-citizen-images"))
@@ -751,6 +788,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "users": dataset.users,
             "predicted_hotspots": dataset.hotspots,
             "alert_log": dataset.alerts,
+            "alert_state": dataset.alert_state,
             "authorities": dataset.authorities,
             "batch_runs": dataset.batch_runs,
             "config_access": dataset.access,
