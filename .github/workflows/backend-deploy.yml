@@ -1,0 +1,468 @@
+name: Backend - test, build and deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/**"
+      - "functions/**"
+      - "ml/**"
+      - "scripts/stage_functions.sh"
+      - "requirements-dev.txt"
+      - "pytest.ini"
+      - ".github/workflows/backend-deploy.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "services/**"
+      - "functions/**"
+      - "ml/**"
+      - "scripts/stage_functions.sh"
+      - "requirements-dev.txt"
+      - "pytest.ini"
+      - ".github/workflows/backend-deploy.yml"
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Deploy after tests pass"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: backend-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.10"
+  NODE_VERSION: "20"
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  GCP_REGION: ${{ vars.GCP_REGION || 'us-central1' }}
+  FIRESTORE_LOCATION: ${{ vars.FIRESTORE_LOCATION || vars.GCP_REGION || 'us-central1' }}
+  ARTIFACT_REGISTRY: ${{ vars.ARTIFACT_REGISTRY }}
+  BIGQUERY_DATASET: vayusetu
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Quality gates
+  # ---------------------------------------------------------------------------
+  gateway-quality:
+    name: API gateway - lint, typecheck, test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/api-gateway
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: services/api-gateway/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test -- --ci
+
+  python-quality:
+    name: Python - lint and test (${{ matrix.component.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        component:
+          - { name: common, path: functions/common }
+          - { name: process_citizen_image, path: functions/process_citizen_image }
+          - { name: fetch_gee_metrics, path: functions/fetch_gee_metrics }
+          - { name: send_authority_alerts, path: functions/send_authority_alerts }
+          - { name: batch_predict, path: functions/batch_predict }
+          - { name: prediction_service, path: services/prediction-service }
+          - { name: ml, path: ml }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            requirements-dev.txt
+            ${{ matrix.component.path }}/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Resolve every requirement set in a single invocation so pip picks a
+          # mutually compatible protobuf / google-cloud-* combination.
+          REQ_ARGS=(-r requirements-dev.txt -r ml/requirements.txt)
+          if [ -f "${{ matrix.component.path }}/requirements.txt" ]; then
+            REQ_ARGS+=(-r "${{ matrix.component.path }}/requirements.txt")
+          fi
+          pip install "${REQ_ARGS[@]}"
+
+      - name: Ruff
+        run: ruff check "${{ matrix.component.path }}"
+
+      - name: Pytest
+        env:
+          PYTHONPATH: functions/common:ml:services/prediction-service
+        run: pytest "${{ matrix.component.path }}" -q
+
+  # ---------------------------------------------------------------------------
+  # Deployments (main branch only)
+  # ---------------------------------------------------------------------------
+  deploy-gateway:
+    name: Deploy API gateway (Cloud Run)
+    needs: [gateway-quality, python-quality]
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy == 'true')
+    runs-on: ubuntu-latest
+    environment: ${{ vars.ENVIRONMENT || 'dev' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+          token_format: access_token
+
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to Artifact Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.GCP_REGION }}-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: services/api-gateway
+          file: services/api-gateway/Dockerfile
+          push: true
+          tags: |
+            ${{ env.ARTIFACT_REGISTRY }}/api-gateway:${{ github.sha }}
+            ${{ env.ARTIFACT_REGISTRY }}/api-gateway:latest
+          cache-from: type=gha,scope=api-gateway
+          cache-to: type=gha,scope=api-gateway,mode=max
+          provenance: false
+
+      - name: Deploy revision
+        run: |
+          gcloud run deploy vayusetu-api-gateway \
+            --project "${GCP_PROJECT_ID}" \
+            --region "${GCP_REGION}" \
+            --image "${ARTIFACT_REGISTRY}/api-gateway:${GITHUB_SHA}" \
+            --quiet
+
+      - name: Smoke test
+        run: |
+          URL=$(gcloud run services describe vayusetu-api-gateway --project "${GCP_PROJECT_ID}" --region "${GCP_REGION}" --format='value(status.url)')
+          echo "Gateway URL: ${URL}"
+          for attempt in 1 2 3 4 5; do
+            if curl --fail --silent --show-error "${URL}/healthz"; then
+              echo "Gateway healthy"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Gateway health check failed" >&2
+          exit 1
+
+  deploy-prediction-service:
+    name: Deploy XGBoost prediction service (Cloud Run)
+    needs: [gateway-quality, python-quality]
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy == 'true')
+    runs-on: ubuntu-latest
+    environment: ${{ vars.ENVIRONMENT || 'dev' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: ml/requirements.txt
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+          token_format: access_token
+
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Resolve model artifact
+        env:
+          ML_ARTIFACTS_BUCKET: ${{ vars.ML_ARTIFACTS_BUCKET }}
+        run: |
+          set -euo pipefail
+          mkdir -p services/prediction-service/model
+          if gcloud storage cp "gs://${ML_ARTIFACTS_BUCKET}/models/model.joblib" services/prediction-service/model/model.joblib 2>/dev/null; then
+            echo "Using published model from gs://${ML_ARTIFACTS_BUCKET}/models/model.joblib"
+          else
+            echo "No published model found; training a synthetic baseline model."
+            pip install -r ml/requirements.txt
+            python ml/train_xgboost_model.py --source synthetic --rows 20000 --output services/prediction-service/model/model.joblib
+            gcloud storage cp services/prediction-service/model/model.joblib "gs://${ML_ARTIFACTS_BUCKET}/models/model.joblib"
+            gcloud storage cp services/prediction-service/model/model_metrics.json "gs://${ML_ARTIFACTS_BUCKET}/models/model_metrics.json"
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to Artifact Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.GCP_REGION }}-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/prediction-service/Dockerfile
+          push: true
+          tags: |
+            ${{ env.ARTIFACT_REGISTRY }}/prediction-service:${{ github.sha }}
+            ${{ env.ARTIFACT_REGISTRY }}/prediction-service:latest
+          cache-from: type=gha,scope=prediction-service
+          cache-to: type=gha,scope=prediction-service,mode=max
+          provenance: false
+
+      - name: Deploy revision
+        run: |
+          gcloud run deploy vayusetu-prediction-service \
+            --project "${GCP_PROJECT_ID}" \
+            --region "${GCP_REGION}" \
+            --image "${ARTIFACT_REGISTRY}/prediction-service:${GITHUB_SHA}" \
+            --quiet
+
+  deploy-functions:
+    name: Deploy Cloud Function (${{ matrix.function.name }})
+    needs: [gateway-quality, python-quality]
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy == 'true')
+    runs-on: ubuntu-latest
+    environment: ${{ vars.ENVIRONMENT || 'dev' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        function:
+          - name: process-citizen-image
+            dir: process_citizen_image
+            entry_point: process_citizen_image
+            service_account: vayusetu-fn-vision
+            memory: 512Mi
+            timeout: 120s
+            max_instances: "3"
+            trigger: storage
+            env_vars: "BIGQUERY_DATASET=vayusetu,SEND_USER_FEEDBACK=true,MAX_IMAGE_EDGE_PX=1024"
+            secrets: "GOOGLE_AI_STUDIO_API_KEY=vayusetu-google-ai-studio-api-key:latest,TWILIO_ACCOUNT_SID=vayusetu-twilio-account-sid:latest,TWILIO_AUTH_TOKEN=vayusetu-twilio-auth-token:latest,TWILIO_WHATSAPP_FROM=vayusetu-twilio-whatsapp-from:latest"
+          - name: fetch-gee-metrics
+            dir: fetch_gee_metrics
+            entry_point: fetch_gee_metrics
+            service_account: vayusetu-fn-gee
+            memory: 512Mi
+            timeout: 180s
+            max_instances: "3"
+            trigger: firestore-reports
+            env_vars: "BIGQUERY_DATASET=vayusetu,GEE_LOOKBACK_DAYS=3,GEE_BUFFER_METERS=5000"
+            secrets: ""
+          - name: send-authority-alerts
+            dir: send_authority_alerts
+            entry_point: send_authority_alerts
+            service_account: vayusetu-fn-alerts
+            memory: 512Mi
+            timeout: 300s
+            max_instances: "2"
+            trigger: firestore-hotspots
+            env_vars: "BIGQUERY_DATASET=vayusetu,TTS_VOICE_TIER=standard"
+            secrets: "TWILIO_ACCOUNT_SID=vayusetu-twilio-account-sid:latest,TWILIO_AUTH_TOKEN=vayusetu-twilio-auth-token:latest,TWILIO_WHATSAPP_FROM=vayusetu-twilio-whatsapp-from:latest,TWILIO_VOICE_FROM=vayusetu-twilio-voice-from:latest"
+          - name: batch-predict
+            dir: batch_predict
+            entry_point: batch_predict
+            service_account: vayusetu-fn-batch
+            memory: 512Mi
+            timeout: 540s
+            max_instances: "1"
+            trigger: http
+            env_vars: "BIGQUERY_DATASET=vayusetu,DATA_SOURCE=bigquery,FALLBACK_TO_FIRESTORE=true,WEATHER_PROVIDER=open-meteo"
+            secrets: ""
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Stage function source with shared library
+        run: |
+          chmod +x scripts/stage_functions.sh
+          scripts/stage_functions.sh "${{ matrix.function.dir }}"
+
+      - name: Deploy
+        env:
+          FN_NAME: ${{ matrix.function.name }}
+          FN_DIR: ${{ matrix.function.dir }}
+          FN_ENTRY: ${{ matrix.function.entry_point }}
+          FN_SA: ${{ matrix.function.service_account }}@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+          FN_MEMORY: ${{ matrix.function.memory }}
+          FN_TIMEOUT: ${{ matrix.function.timeout }}
+          FN_MAX_INSTANCES: ${{ matrix.function.max_instances }}
+          FN_TRIGGER: ${{ matrix.function.trigger }}
+          FN_ENV_VARS: ${{ matrix.function.env_vars }}
+          FN_SECRETS: ${{ matrix.function.secrets }}
+          CITIZEN_IMAGES_BUCKET: ${{ vars.CITIZEN_IMAGES_BUCKET }}
+          ALERT_AUDIO_BUCKET: ${{ vars.ALERT_AUDIO_BUCKET }}
+          PREDICTION_SERVICE_URL: ${{ vars.PREDICTION_SERVICE_URL }}
+          GEMINI_MODEL_CANDIDATES: ${{ vars.GEMINI_MODEL_CANDIDATES || 'gemini-1.5-flash,gemini-flash-latest,gemini-3.5-flash-lite,gemini-2.5-flash' }}
+          ALERT_AQI_THRESHOLD: ${{ vars.ALERT_AQI_THRESHOLD || '300' }}
+          HOTSPOT_GEOHASH_PRECISION: ${{ vars.HOTSPOT_GEOHASH_PRECISION || '5' }}
+          GEE_PROJECT: ${{ vars.GEE_PROJECT || vars.GCP_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+
+          COMMON_ENV="GCP_PROJECT_ID=${GCP_PROJECT_ID},GCP_REGION=${GCP_REGION},CITIZEN_IMAGES_BUCKET=${CITIZEN_IMAGES_BUCKET},ALERT_AUDIO_BUCKET=${ALERT_AUDIO_BUCKET},PREDICTION_SERVICE_URL=${PREDICTION_SERVICE_URL},GEMINI_MODEL_CANDIDATES=${GEMINI_MODEL_CANDIDATES},ALERT_AQI_THRESHOLD=${ALERT_AQI_THRESHOLD},HOTSPOT_GEOHASH_PRECISION=${HOTSPOT_GEOHASH_PRECISION},GEE_PROJECT=${GEE_PROJECT},LOG_LEVEL=INFO"
+          if [ -n "${FN_ENV_VARS}" ]; then
+            COMMON_ENV="${COMMON_ENV},${FN_ENV_VARS}"
+          fi
+
+          ARGS=(
+            "${FN_NAME}"
+            --gen2
+            --project "${GCP_PROJECT_ID}"
+            --region "${GCP_REGION}"
+            --runtime python310
+            --source "build/functions/${FN_DIR}"
+            --entry-point "${FN_ENTRY}"
+            --service-account "${FN_SA}"
+            --memory "${FN_MEMORY}"
+            --timeout "${FN_TIMEOUT}"
+            --max-instances "${FN_MAX_INSTANCES}"
+            --concurrency 1
+            --set-env-vars "${COMMON_ENV}"
+            --quiet
+          )
+
+          if [ -n "${FN_SECRETS}" ]; then
+            ARGS+=(--set-secrets "${FN_SECRETS}")
+          fi
+
+          case "${FN_TRIGGER}" in
+            storage)
+              ARGS+=(
+                --trigger-event-filters "type=google.cloud.storage.object.v1.finalized"
+                --trigger-event-filters "bucket=${CITIZEN_IMAGES_BUCKET}"
+                --trigger-location "${GCP_REGION}"
+                --trigger-service-account "${FN_SA}"
+                --no-allow-unauthenticated
+              )
+              ;;
+            firestore-reports)
+              ARGS+=(
+                --trigger-event-filters "type=google.cloud.firestore.document.v1.created"
+                --trigger-event-filters "database=(default)"
+                --trigger-event-filters-path-pattern "document=citizen_reports/{reportId}"
+                --trigger-location "${FIRESTORE_LOCATION}"
+                --trigger-service-account "${FN_SA}"
+                --no-allow-unauthenticated
+              )
+              ;;
+            firestore-hotspots)
+              ARGS+=(
+                --trigger-event-filters "type=google.cloud.firestore.document.v1.created"
+                --trigger-event-filters "database=(default)"
+                --trigger-event-filters-path-pattern "document=predicted_hotspots/{hotspotId}"
+                --trigger-location "${FIRESTORE_LOCATION}"
+                --trigger-service-account "${FN_SA}"
+                --no-allow-unauthenticated
+              )
+              ;;
+            http)
+              ARGS+=(
+                --trigger-http
+                --no-allow-unauthenticated
+              )
+              ;;
+            *)
+              echo "Unknown trigger type: ${FN_TRIGGER}" >&2
+              exit 1
+              ;;
+          esac
+
+          gcloud functions deploy "${ARGS[@]}"
+
+      - name: Grant invoker to trigger identity
+        env:
+          FN_NAME: ${{ matrix.function.name }}
+          FN_SA: ${{ matrix.function.service_account }}@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+          FN_TRIGGER: ${{ matrix.function.trigger }}
+        run: |
+          set -euo pipefail
+          if [ "${FN_TRIGGER}" = "http" ]; then
+            MEMBER="serviceAccount:vayusetu-scheduler@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
+          else
+            MEMBER="serviceAccount:${FN_SA}"
+          fi
+          gcloud run services add-iam-policy-binding "${FN_NAME}" \
+            --project "${GCP_PROJECT_ID}" \
+            --region "${GCP_REGION}" \
+            --member "${MEMBER}" \
+            --role roles/run.invoker \
+            --quiet
+
+  deployment-summary:
+    name: Deployment summary
+    needs: [deploy-gateway, deploy-prediction-service, deploy-functions]
+    if: always() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summarise
+        run: |
+          {
+            echo "## VayuSetu backend deployment"
+            echo ""
+            echo "| Component | Result |"
+            echo "| --- | --- |"
+            echo "| API gateway | ${{ needs.deploy-gateway.result }} |"
+            echo "| Prediction service | ${{ needs.deploy-prediction-service.result }} |"
+            echo "| Cloud Functions | ${{ needs.deploy-functions.result }} |"
+          } >> "$GITHUB_STEP_SUMMARY"

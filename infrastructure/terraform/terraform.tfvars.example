@@ -1,0 +1,33 @@
+# Copy to terraform.tfvars (git-ignored) and fill in your values.
+# Secrets can alternatively be supplied through TF_VAR_* environment variables,
+# which is how the GitHub Actions Terraform workflow provides them.
+
+project_id         = "vayusetu-dev-123456"
+region             = "us-central1"
+firestore_location = "us-central1"
+bigquery_location  = "US"
+environment        = "dev"
+
+github_repository = "samudragupto/VayuSetu"
+admin_domain      = "example-municipality.gov.in"
+
+# Gemini model chain. The first entry honours the original specification; the
+# remaining entries are current free-tier Flash models used as fallbacks.
+gemini_model_candidates = "gemini-1.5-flash,gemini-flash-latest,gemini-3.5-flash-lite,gemini-2.5-flash"
+
+alert_aqi_threshold       = 300
+hotspot_geohash_precision = 5
+batch_predict_schedule    = "0 * * * *"
+batch_lookback_hours      = 6
+
+# Twilio (sandbox values work for the hackathon demo)
+twilio_account_sid   = "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+twilio_auth_token    = "your-twilio-auth-token"
+twilio_whatsapp_from = "whatsapp:+14155238886"
+twilio_voice_from    = "+14155550100"
+
+# Google AI Studio (free tier) API key
+google_ai_studio_api_key = "AIza..."
+
+# Leave empty to let Terraform generate a random HMAC secret.
+phone_hash_secret = ""

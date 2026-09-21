@@ -1,0 +1,11 @@
+# Copy to backend.hcl (git-ignored) and run:
+#   terraform init -backend-config=backend.hcl
+#
+# Create the bucket once with:
+#   gcloud storage buckets create gs://<project-id>-vayusetu-tfstate \
+#     --project <project-id> --location us-central1 \
+#     --uniform-bucket-level-access --public-access-prevention
+#   gcloud storage buckets update gs://<project-id>-vayusetu-tfstate --versioning
+
+bucket = "vayusetu-dev-123456-vayusetu-tfstate"
+prefix = "vayusetu/dev"

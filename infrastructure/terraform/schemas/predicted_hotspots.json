@@ -1,0 +1,18 @@
+[
+  { "name": "hotspot_id", "type": "STRING", "mode": "REQUIRED", "description": "Firestore document ID of the prediction." },
+  { "name": "geohash", "type": "STRING", "mode": "REQUIRED", "description": "Aggregation cell (geohash precision configured by HOTSPOT_GEOHASH_PRECISION)." },
+  { "name": "latitude", "type": "FLOAT64", "mode": "NULLABLE", "description": "Centroid latitude of the cell." },
+  { "name": "longitude", "type": "FLOAT64", "mode": "NULLABLE", "description": "Centroid longitude of the cell." },
+  { "name": "city", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "generated_at", "type": "TIMESTAMP", "mode": "REQUIRED" },
+  { "name": "forecast_for", "type": "TIMESTAMP", "mode": "NULLABLE" },
+  { "name": "horizon_hours", "type": "INT64", "mode": "NULLABLE" },
+  { "name": "predicted_aqi", "type": "FLOAT64", "mode": "NULLABLE" },
+  { "name": "predicted_category", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "current_aqi_estimate", "type": "FLOAT64", "mode": "NULLABLE" },
+  { "name": "report_count", "type": "INT64", "mode": "NULLABLE" },
+  { "name": "confidence", "type": "FLOAT64", "mode": "NULLABLE" },
+  { "name": "model_version", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "alert_triggered", "type": "BOOL", "mode": "NULLABLE" },
+  { "name": "features", "type": "STRING", "mode": "NULLABLE", "description": "JSON encoded feature vector supplied to the model." }
+]

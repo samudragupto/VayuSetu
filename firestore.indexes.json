@@ -1,0 +1,61 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "citizen_reports",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "citizen_reports",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "analyzedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "citizen_reports",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "phoneHash", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "predicted_hotspots",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "geohash", "order": "ASCENDING" },
+        { "fieldPath": "generatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "predicted_hotspots",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "alertStatus", "order": "ASCENDING" },
+        { "fieldPath": "generatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "alert_log",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "hotspotId", "order": "ASCENDING" },
+        { "fieldPath": "sentAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "authorities",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "coverageGeohashes", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "active", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

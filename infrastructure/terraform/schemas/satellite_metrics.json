@@ -1,0 +1,18 @@
+[
+  { "name": "report_id", "type": "STRING", "mode": "REQUIRED", "description": "Firestore document ID of the citizen report." },
+  { "name": "observed_at", "type": "TIMESTAMP", "mode": "REQUIRED", "description": "Report time used as the end of the satellite lookback window." },
+  { "name": "fetched_at", "type": "TIMESTAMP", "mode": "NULLABLE" },
+  { "name": "latitude", "type": "FLOAT64", "mode": "NULLABLE" },
+  { "name": "longitude", "type": "FLOAT64", "mode": "NULLABLE" },
+  { "name": "geohash", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "buffer_radius_m", "type": "INT64", "mode": "NULLABLE" },
+  { "name": "lookback_days", "type": "INT64", "mode": "NULLABLE" },
+  { "name": "aer_ai", "type": "FLOAT64", "mode": "NULLABLE", "description": "Sentinel-5P UV absorbing aerosol index (COPERNICUS/S5P/OFFL/L3_AER_AI)." },
+  { "name": "no2_tropospheric_mol_m2", "type": "FLOAT64", "mode": "NULLABLE", "description": "Sentinel-5P tropospheric NO2 column density (mol/m^2)." },
+  { "name": "co_column_mol_m2", "type": "FLOAT64", "mode": "NULLABLE", "description": "Sentinel-5P CO column density (mol/m^2)." },
+  { "name": "so2_column_mol_m2", "type": "FLOAT64", "mode": "NULLABLE", "description": "Sentinel-5P SO2 column density (mol/m^2)." },
+  { "name": "aod_047", "type": "FLOAT64", "mode": "NULLABLE", "description": "MODIS MAIAC aerosol optical depth at 470 nm (scaled)." },
+  { "name": "s5p_image_count", "type": "INT64", "mode": "NULLABLE" },
+  { "name": "modis_image_count", "type": "INT64", "mode": "NULLABLE" },
+  { "name": "source", "type": "STRING", "mode": "NULLABLE", "description": "earth_engine or mock." }
+]

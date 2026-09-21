@@ -1,0 +1,7 @@
+functions-framework>=3.8,<4
+earthengine-api>=1.1,<2
+google-auth>=2.29,<3
+google-cloud-firestore>=2.16,<3
+google-cloud-bigquery>=3.25,<4
+google-events>=0.14,<1
+requests>=2.32,<3
