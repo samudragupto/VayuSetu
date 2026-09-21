@@ -229,7 +229,8 @@ successful classic build, BuildKit's own cache is still empty, so avoid
 when you do upgrade a base image, use `docker compose build --pull` on a healthy
 network rather than pruning the whole builder.
 
-### CRLF line endings: `/usr/bin/env: 'bash': No such file or directory`
+### CRLF line endings: `/usr/bin/env: 'bash
+': No such file or directory`
 
 A container that exits instantly with code 127 and that message - and the failing
 line being a script's shebang - is Git's `core.autocrlf=true` rewriting LF to CRLF at
@@ -247,13 +248,39 @@ git restore local/firebase/entrypoint.sh
 grep -c ([char]13) local/firebase/entrypoint.sh    # 0 once fixed
 ```
 
-The stack is additionally defended at two points: `local/firebase/Dockerfile`
-strips CR from its copy, and the Compose `firebase` service `command` runs
-`sed -i 's/\r$//' /workspace/local/firebase/entrypoint.sh` first, because the
-repository root is bind-mounted over the image's copy - a stale CRLF working file
-would otherwise win. Both are no-ops on a clean checkout. Any other script mounted
-into a container is equally affected; if it is invoked as `bash file.sh`, prefer
-`sh file.sh`-tolerant syntax or strip CR at the call site.
+Recovery, and why the stack now also repairs itself:
+
+```powershell
+git ls-files --eol local/firebase/entrypoint.sh   # expect `i/lf w/lf`; `w/crlf` is the bug
+git config core.autocrlf false
+git add --renormalize .
+git commit -m "chore: normalise line endings"
+del local\firebase\entrypoint.sh
+git restore local/firebase/entrypoint.sh
+```
+
+`git pull` alone is already enough to boot the stack: the Compose `firebase` service
+`command` strips CRs from *each candidate entrypoint* (the bind-mounted working copy
+first, then the image copy) and execs the first one that passes `sh -n`, so a stale
+CRLF image is bypassed and the working file is repaired in place. Because that repair
+rewrites a file Git had stored with CRLF, `git status` may afterwards list
+`local/firebase/entrypoint.sh` as modified while the content matches the repo's
+bytes - commit it with `git add --renormalize .`, or `git restore` it. Run
+`docker compose up --build` once to bake a clean copy into the image.
+
+Two things that are *not* enough on their own, learned the hard way:
+
+- A CRLF script cannot self-repair when it is exec'd: the kernel rejects
+  `#!/bin/sh\r` (and `#!/usr/bin/env: 'bash\r'`) before any line of the script runs.
+  The repair must live outside the file (Compose `command`, image build).
+- `local/firebase/entrypoint.sh` is POSIX sh, one statement per line: multi-line
+  constructs (`if x && y \` + continuation, `ARGS=(...)`) make the parser see
+  `then\r` / treat `((` as arithmetic and fail, so keep the script readable by
+  dash even with CRLF, and avoid bash arrays.
+
+Any other script mounted into a container is equally affected; strip CR at the call
+site the same way, or invoke it as `sh file.sh` only if it is one-statement-per-line
+POSIX sh.
 
 **The repository no longer depends on runtime package installs in the API gateway
 image**: the gateway moved from `node:20-alpine` to `node:20-bookworm-slim` and the

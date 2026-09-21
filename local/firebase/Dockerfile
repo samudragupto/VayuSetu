@@ -18,11 +18,12 @@ RUN apt-get update -o Acquire::Retries=3 \
 WORKDIR /workspace
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 
-# Belt and braces for Windows checkouts: a CRLF copy of this script (the
-# repository root is mounted over /workspace, so the mounted file is what
-# actually runs) fails as `/usr/bin/env: 'bash\r': No such file or directory`.
-# .gitattributes pins the endings, and this strips any stray CR anyway.
-RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh \
+# Windows checkouts can hand Git CRLF instead of LF, and an image built from such a
+# tree bakes those CRs into a layer, so sanitise the copy stored in the image. This
+# runs at build time and is independent of the host's core.autocrlf; the runtime
+# `command` in docker-compose.yml does the same for the bind-mounted working copy.
+RUN tr -d '\r' < /usr/local/bin/entrypoint.sh > /usr/local/bin/entrypoint.sh.lf \
+    && mv /usr/local/bin/entrypoint.sh.lf /usr/local/bin/entrypoint.sh \
     && chmod +x /usr/local/bin/entrypoint.sh
 
 EXPOSE 4000 4400 4500 5000 5001 8080 9099 9150 9199 9299
