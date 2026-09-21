@@ -15,6 +15,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_RETRIES=8 \
+    PIP_TIMEOUT=120 \
     PORT=8080
 
 RUN groupadd --system app && useradd --system --gid app --home-dir /app app

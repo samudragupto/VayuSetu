@@ -5,7 +5,9 @@
 FROM node:20-bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive \
-    FIREBASE_TOOLS_VERSION=13.35.1
+    FIREBASE_TOOLS_VERSION=13.35.1 \
+    npm_config_fetch_retries=5 \
+    npm_config_fetch_timeout=300000
 
 RUN apt-get update -o Acquire::Retries=3 \
     && apt-get install -y --no-install-recommends openjdk-17-jre-headless curl ca-certificates \

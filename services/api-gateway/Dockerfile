@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.7
 # Multi-stage build for the VayuSetu API gateway (Cloud Run, Node.js 20).
 #
 # The runtime stages use node:20-bookworm-slim (Debian) rather than the Alpine
@@ -14,8 +13,19 @@
 # `docker compose` forwards SIGTERM/SIGINT straight to PID 1 (services/api-gateway
 # src/index.ts installs handlers for both) and Cloud Run's sandbox reaps
 # orphaned processes natively, so an in-image init binary is unnecessary here.
+#
+# There is deliberately no `# syntax=docker/dockerfile` directive: BuildKit's
+# built-in frontend understands every instruction used here, and pinning one
+# makes each build download docker/dockerfile from the registry first - the
+# first thing to fail on a network where `lookup registry-1.docker.io` errors.
 
 FROM node:20-bookworm-slim AS deps
+
+# Generous retry/timeout budgets so a flaky CDN or a slow proxy shows up as a
+# slow build, not a failed one. ENV persists to every later stage.
+ENV npm_config_fetch_retries=5 \
+    npm_config_fetch_timeout=300000
+
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi

@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.6
 # Build context: repository root (the image needs both ml/ and this service).
 #   docker build -f services/prediction-service/Dockerfile -t prediction-service .
 
@@ -7,7 +6,9 @@ FROM python:3.10-slim AS base
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_RETRIES=8 \
+    PIP_TIMEOUT=120
 
 WORKDIR /app
 

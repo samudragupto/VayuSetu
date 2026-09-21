@@ -161,15 +161,24 @@ cp .env.example .env            # defaults are safe for local use
 docker compose up --build       # first build takes a few minutes
 ```
 
-If a build stops with `apk add ... tini: tini (no such package)`,
-`v2 database format error` or `DNS: transient error`, the build container could not
-reach a package CDN - that is the local Docker network, not the code. Set a working
-resolver in Docker Desktop (Settings → Resources → Network → DNS server, e.g.
-`1.1.1.1, 8.8.8.8`), remove any custom registry mirror or proxy that cannot reach
-`deb.debian.org`/`dl-cdn.alpinelinux.org`, update Docker Desktop, then rerun
-`docker compose build --pull`. `No matching distribution found for <package>` is a
-different class of error: a requirements file lists a package PyPI does not know
-about. See [Build and deployment runbook](docs/BUILD_AND_DEPLOY.md).
+Build failures in this stack are almost always the network inside Docker Desktop,
+not the code. Three signatures and what they mean:
+
+- `tini (no such package)`, `v2 database format error`, `DNS: transient error` → the
+  build container could not reach a package CDN. Set a working resolver
+  (Settings → Resources → Network → DNS server, e.g. `8.8.8.8, 1.1.1.1`), update
+  Docker Desktop, rerun `docker compose build --pull`.
+- `lookup registry-1.docker.io: no such host` (often with *"Docker Desktop has no
+  HTTPS proxy"*) → the VM cannot reach the registry. Docker Desktop → Resources →
+  Proxies: set **Secure Web Proxy (HTTPS)** to the same address as the HTTP one, or
+  clear both, then restart Docker Desktop. To build anyway:
+  `powershell -File scripts\prepull_base_images.ps1` then
+  `$env:DOCKER_BUILDKIT=0; docker compose up --build`.
+- `No matching distribution found for <package>` → a requirements file lists a
+  package PyPI does not know; that one is a real repo problem.
+
+Details, recovery commands and the shared-layer caveats:
+[Build and deployment runbook](docs/BUILD_AND_DEPLOY.md).
 
 Endpoints once everything is healthy:
 

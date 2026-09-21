@@ -125,7 +125,7 @@ Function endpoints consume POST/CloudEvent payloads; a browser GET returning 400
 ## Base images and build-network troubleshooting
 
 Build failures in this stack are usually the build container's network, not the
-Dockerfiles. Two signatures seen on a Windows/Docker Desktop checkout:
+Dockerfiles. Three signatures seen on a Windows/Docker Desktop checkout:
 
 ```
 WARNING: fetching https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/APKINDEX.tar.gz: DNS: transient error (try again later)
@@ -138,25 +138,67 @@ ERROR: unable to select packages:
 WARNING: fetching .../v3.23/community/x86_64/APKINDEX.tar.gz: v2 database format error
 ```
 
-Both mean the same thing: `apk` could not load a package index, so it reported the
-requested package as nonexistent. Alpine 3.21+ publishes APKINDEX in the new v2
-format, which older `apk-tools` in Docker Desktop's VM cannot always parse, and a
-registry mirror or flaky resolver turns the rest into `DNS: transient error`.
+```
+failed to compute cache key: failed to copy: httpReadSeeker: failed open: ...
+Get "https://registry-1.docker.io/v2/library/node/blobs/sha256:...":
+dialing registry-1.docker.io:443 container via direct connection because
+Docker Desktop has no HTTPS proxy: connecting to registry-1.docker.io:443:
+dial tcp: lookup registry-1.docker.io: no such host
+```
+
+The first two mean the same thing: `apk` could not load a package index, so it
+reported the requested package as nonexistent. Alpine 3.21+ publishes APKINDEX in
+the new v2 format, which older `apk-tools` in Docker Desktop's VM cannot always
+parse, and a registry mirror or flaky resolver turns the rest into
+`DNS: transient error`.
+
+The third is the registry itself: the build VM cannot resolve `registry-1.docker.io`
+while fetching base-image layers. Read the hint it hands you - *"because Docker
+Desktop has no HTTPS proxy"* - a proxy is configured for HTTP only, so HTTPS traffic
+from the VM bypasses it and hits a resolver that cannot answer. The partial
+downloads (`sha256:... 10.49MB / 11.80MB`) are the same failure: layers stall, the
+build aborts, and mid-copy it reports `failed to compute cache key`.
 
 Fixes, in order of preference:
 
-1. Update Docker Desktop (Settings → General → *Check for updates*). Newer builds
+1. If the proxy page shows an HTTP proxy but no HTTPS one (the usual cause of the
+   `no such host` variant): either fill in **Secure Web Proxy (HTTPS)** with the same
+   address, or clear both boxes so the VM uses direct system DNS. Restart Docker
+   Desktop afterwards - the VM's resolver only re-reads settings on restart.
+2. Update Docker Desktop (Settings → General → *Check for updates*). Newer builds
    ship an `apk-tools` that reads the v2 index, and any `node:20-alpine` image
    cached from an older pull should be refreshed with `docker compose build --pull`.
-2. Give containers a resolver that works off the corporate/VPN network:
-   Docker Desktop → Settings → Resources → Network → *DNS server* → `1.1.1.1, 8.8.8.8`.
-   The same value in the Docker Engine JSON tab is `{"dns": ["1.1.1.1", "8.8.8.8"]}`.
-3. If a registry mirror is configured for Docker Hub, remove it (or add
+3. Give containers a resolver that works off the corporate/VPN network:
+   Docker Desktop → Settings → Resources → Network → *DNS server* → `8.8.8.8, 1.1.1.1`.
+   The same value in the Docker Engine JSON tab is `{"dns": ["8.8.8.8", "1.1.1.1"]}`.
+4. If a registry mirror is configured for Docker Hub, remove it (or add
    `https://index.docker.io/1.1/` as a fallback) in Docker Engine settings; broken
    mirrors cause the slow layer downloads that turn into DNS timeouts.
-4. If a proxy is set on the Docker Desktop *Resources → Proxies* page, the build
-   container uses it for every CDN. A proxy that cannot reach
-   `dl-cdn.alpinelinux.org` or `deb.debian.org` fails exactly like the above.
+
+### Build offline-ish: pre-pull the bases, skip BuildKit
+
+Until the resolver is fixed, take the registry out of the build path. The
+`docker pull` loop retries on its own and needs no BuildKit, and
+`DOCKER_BUILDKIT=0` makes Compose use whatever is already in the local image store
+instead of resolving each tag (and each `# syntax=` frontend image) against
+`registry-1.docker.io` first:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\prepull_base_images.ps1
+$env:DOCKER_BUILDKIT=0
+docker compose up --build
+```
+
+```bash
+./scripts/prepull_base_images.sh
+DOCKER_BUILDKIT=0 docker compose up --build
+```
+
+The classic builder still runs the same `RUN` layers, so npm/PyPI/Debian access is
+needed for those, but nothing is re-downloaded per target and no frontend image is
+fetched: `functions/Dockerfile`, `services/*/Dockerfile` and the local mocks carry no
+`# syntax=` pin, and the shared Python/Node layers are cached after the first pass.
+Keep `docker compose build --pull` for the day you deliberately upgrade a base image.
 
 **The repository no longer depends on runtime package installs in the API gateway
 image**: the gateway moved from `node:20-alpine` to `node:20-bookworm-slim` and the
