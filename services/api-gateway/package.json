@@ -1,0 +1,53 @@
+{
+  "name": "@vayusetu/api-gateway",
+  "version": "1.0.0",
+  "private": true,
+  "description": "VayuSetu WhatsApp ingestion gateway: Twilio webhooks, Cloud Storage uploads and Firestore logging",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=20 <23"
+  },
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist coverage",
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "start": "node dist/index.js",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "jest",
+    "test:coverage": "jest --coverage"
+  },
+  "dependencies": {
+    "@google-cloud/firestore": "^7.10.0",
+    "@google-cloud/storage": "^7.13.0",
+    "express": "^4.21.2",
+    "firebase-admin": "^12.7.0",
+    "helmet": "^8.0.0",
+    "ngeohash": "^0.6.3",
+    "pino": "^9.5.0",
+    "pino-http": "^10.3.0",
+    "twilio": "^5.3.5",
+    "undici": "^6.21.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.15.0",
+    "@types/express": "^4.17.21",
+    "@types/jest": "^29.5.14",
+    "@types/ngeohash": "^0.6.8",
+    "@types/node": "^20.17.6",
+    "@types/supertest": "^6.0.2",
+    "eslint": "^9.15.0",
+    "eslint-config-prettier": "^9.1.0",
+    "globals": "^15.12.0",
+    "jest": "^29.7.0",
+    "supertest": "^7.0.0",
+    "ts-jest": "^29.2.5",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.15.0"
+  }
+}

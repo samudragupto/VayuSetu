@@ -346,6 +346,51 @@ resource "google_firestore_index" "authorities_by_coverage" {
   }
 }
 
+# Dashboard and gateway stats: hotspots filtered by alert status within a window.
+resource "google_firestore_index" "hotspots_by_alert_status" {
+  project    = var.project_id
+  database   = google_firestore_database.default.name
+  collection = "predicted_hotspots"
+
+  fields {
+    field_path = "alertStatus"
+    order      = "ASCENDING"
+  }
+  fields {
+    field_path = "generatedAt"
+    order      = "DESCENDING"
+  }
+}
+
+# Alert log queries by hotspot for the dashboard detail view.
+resource "google_firestore_index" "alert_log_by_hotspot" {
+  project    = var.project_id
+  database   = google_firestore_database.default.name
+  collection = "alert_log"
+
+  fields {
+    field_path = "hotspotId"
+    order      = "ASCENDING"
+  }
+  fields {
+    field_path = "sentAt"
+    order      = "DESCENDING"
+  }
+}
+
+# Webhook idempotency records expire automatically after seven days.
+resource "google_firestore_field" "webhook_events_ttl" {
+  project    = var.project_id
+  database   = google_firestore_database.default.name
+  collection = "webhook_events"
+  field      = "expiresAt"
+
+  ttl_config {}
+
+  # Disable single-field indexing for this collection's TTL field.
+  index_config {}
+}
+
 # ---------------------------------------------------------------------------
 # BigQuery
 # ---------------------------------------------------------------------------
