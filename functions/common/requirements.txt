@@ -1,0 +1,5 @@
+# Runtime dependencies of the shared vayusetu_common package. Each function
+# lists the subset it actually needs in its own requirements.txt.
+requests>=2.32,<3
+google-cloud-bigquery>=3.25,<4
+google-events>=0.14,<1

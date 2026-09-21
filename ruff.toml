@@ -1,0 +1,15 @@
+line-length = 120
+target-version = "py310"
+extend-exclude = ["build", "node_modules", ".venv", "frontend", "local/event-bridge"]
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP", "N"]
+ignore = ["E501", "B008", "UP006", "UP007", "UP035", "UP037", "UP045", "N818"]
+
+[lint.per-file-ignores]
+"**/tests/**" = ["B011", "N802"]
+"scripts/*.py" = ["E402"]
+"ml/train_xgboost_model.py" = ["E402"]
+
+[lint.isort]
+known-first-party = ["vayusetu_common", "vayusetu_ml", "app"]

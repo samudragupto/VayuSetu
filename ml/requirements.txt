@@ -1,0 +1,7 @@
+# Training and feature engineering dependencies (also installed in the
+# prediction service image and the batch prediction function).
+numpy>=1.26,<3
+pandas>=2.2,<3
+scikit-learn>=1.4,<2
+xgboost>=2.0,<3
+joblib>=1.4,<2

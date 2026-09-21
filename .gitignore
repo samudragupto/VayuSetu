@@ -1,0 +1,82 @@
+# ---------------------------------------------------------------------------
+# VayuSetu monorepo ignore rules
+# ---------------------------------------------------------------------------
+
+# Secrets and local environment files
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+service-account*.json
+gcp-credentials*.json
+infrastructure/terraform/terraform.tfvars
+infrastructure/terraform/backend.hcl
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+pubsub-debug.log
+storage-debug.log
+database-debug.log
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+htmlcov/
+.coverage
+coverage.xml
+
+# Node / TypeScript
+node_modules/
+dist/
+build/
+coverage/
+.eslintcache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Next.js
+frontend/.next/
+frontend/out/
+frontend/next-env.d.ts
+frontend/tsconfig.tsbuildinfo
+
+# Machine learning artifacts and datasets
+ml/artifacts/
+ml/data/
+services/prediction-service/model/*.joblib
+services/prediction-service/model/*.json
+*.joblib
+*.csv
+!ml/sample_data/**/*.csv
+
+# Firebase emulator persisted state
+local/emulator-data/
+.firebase/
+
+# Docker
+*.pid
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
