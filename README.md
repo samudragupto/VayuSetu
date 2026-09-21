@@ -161,6 +161,35 @@ cp .env.example .env            # defaults are safe for local use
 docker compose up --build       # first build takes a few minutes
 ```
 
+Build failures in this stack are almost always the network inside Docker Desktop,
+not the code. Three signatures and what they mean:
+
+- `tini (no such package)`, `v2 database format error`, `DNS: transient error` → the
+  build container could not reach a package CDN. Set a working resolver
+  (Settings → Resources → Network → DNS server, e.g. `8.8.8.8, 1.1.1.1`), update
+  Docker Desktop, rerun `docker compose build --pull`.
+- `lookup registry-1.docker.io: no such host` or
+  `lookup production.cloudfront.docker.com: no such host`, both with *"Docker Desktop
+  has no HTTPS proxy"* → the VM cannot download image layers. Docker Desktop →
+  Resources → Proxies: set **Secure Web Proxy (HTTPS)** to the same address as the
+  HTTP one (or clear both), then restart Docker Desktop. To build meanwhile -
+  BuildKit never uses `docker pull`, the classic builder does:
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File scripts\prepull_base_images.ps1 -Build
+  docker compose up          # no --build needed; images are already built
+  ```
+- `No matching distribution found for <package>` → a requirements file lists a
+  package PyPI does not know; that one is a real repo problem.
+- A container exiting 127 with `/usr/bin/env: 'bash\r': No such file or directory`
+  → Git checked the script out with CRLF. `.gitattributes` now pins LF and the
+  `firebase` service self-repairs, so `git pull && docker compose up` is enough;
+  normalise the checkout with `git config core.autocrlf false`,
+  `git add --renormalize .`, `git commit`, and add `--build` to bake the clean
+  script into the image.
+
+Details, recovery commands and the shared-layer caveats:
+[Build and deployment runbook](docs/BUILD_AND_DEPLOY.md).
+
 Endpoints once everything is healthy:
 
 | URL | Purpose |

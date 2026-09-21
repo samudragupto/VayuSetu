@@ -15,17 +15,25 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_RETRIES=8 \
+    PIP_TIMEOUT=120 \
     PORT=8080
 
 RUN groupadd --system app && useradd --system --gid app --home-dir /app app
 WORKDIR /app
 
 # Build tools are a fallback for packages without wheels on the target platform.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Acquire::Retries keeps a transient DNS/mirror hiccup from failing the whole build.
+RUN apt-get update -o Acquire::Retries=3 \
+    && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+# setuptools/wheel only: pip is never upgraded here. `pip install --upgrade pip`
+# pulls the newest pip and then re-resolves every pin above it, which is how a
+# typo in a requirements file turns into a long, confusing failure. The pip in
+# python:3.10-slim is perfectly capable of installing this stack.
+RUN pip install --no-cache-dir --prefer-binary "setuptools>=68" wheel
 
 # Keep the common layer reusable across all four functions.
 COPY functions/common/requirements.txt /tmp/common-requirements.txt

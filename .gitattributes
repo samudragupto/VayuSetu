@@ -1,0 +1,57 @@
+# Normalise line endings so files consumed inside Linux containers never carry a
+# carriage return, whatever core.autocrlf is set to on a Windows checkout.
+# Without this, `entrypoint.sh` checked out with CRLF fails as:
+#   /usr/bin/env: 'bash\r': No such file or directory
+* text=auto eol=lf
+
+# Windows-only helpers, if any are ever added.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Never run Git's text/eol conversion on these.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.tgz binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.joblib binary
+*.pkl binary
+*.onnx binary
+*.parquet binary
+*.mp3 binary
+*.wav binary
+*.ogg binary
+*.jar binary
+
+# Explicit, for tooling that ignores the `text` attribute (e.g. `dos2unix`-style
+# checks and editor integrations).
+*.sh  text eol=lf
+*.py  text eol=lf
+*.js  text eol=lf
+*.ts  text eol=lf
+*.mjs text eol=lf
+*.cjs text eol=lf
+*.json text eol=lf
+*.tf  text eol=lf
+*.tfvars text eol=lf
+*.hcl text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.cfg text eol=lf
+*.ini text eol=lf
+*.txt text eol=lf
+Dockerfile text eol=lf
+*.dockerfile text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+.editorconfig text eol=lf

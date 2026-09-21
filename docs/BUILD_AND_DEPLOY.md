@@ -54,9 +54,14 @@ integration (HTTP 403), so no variable values were inspected or changed.
 - `requirements-dev.txt` includes the common manifest; CI uses the same constraints
   and runs `pip check`. Production function staging already merges the common
   manifest into the uploaded `requirements.txt` and is covered by regression tests.
-- Both Dockerfiles install build-essential, upgrade pip/setuptools/wheel, prefer
+- Both Dockerfiles install build-essential, ensure `setuptools`/`wheel`, prefer
   wheels, install common requirements first, and constrain the later installation.
   The prediction image retains `libgomp1` for XGBoost at runtime.
+- Neither Python Dockerfile runs `pip install --upgrade pip`. Upgrading pip inside a
+  build layer pulls an unpinned tool and forces a second full resolution pass, which
+  is how one bad line in a requirements file becomes a long, confusing failure that
+  looks like a network problem. The interpreter images ship a pip that resolves this
+  stack correctly.
 - There is no final loose `functions-framework>=3.8,<4` install. The exact pin
   is already installed; the FastAPI prediction service does not need the framework.
 - Function-specific build arguments are declared after the shared layers, so all
@@ -83,8 +88,11 @@ cd /path/to/VayuSetu
 docker compose config --quiet
 
 docker compose down --remove-orphans
-# Remove unused build cache; confirm the shared-cache impact before running.
-docker builder prune --all --force
+# WARNING: this deletes BuildKit's copy of the base-image layers, and BuildKit does
+# not fall back to `docker pull` - every target re-downloads ~120 MB from
+# production.cloudfront.docker.com afterwards. Skip it while the registry path is
+# flaky; `--no-cache` alone rebuilds without losing the base layers.
+docker builder prune --all --force   # only when you really need the disk space
 # If using a separate Buildx builder, also clear that builder's cache:
 docker buildx prune --all --force
 
@@ -116,6 +124,187 @@ curl --fail http://localhost:8081/healthz
 
 Function endpoints consume POST/CloudEvent payloads; a browser GET returning 400 or
 405 is not a dependency failure. Follow the local simulation commands in README.
+
+## Base images and build-network troubleshooting
+
+Build failures in this stack are usually the build container's network, not the
+Dockerfiles. Three signatures seen on a Windows/Docker Desktop checkout:
+
+```
+WARNING: fetching https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/APKINDEX.tar.gz: DNS: transient error (try again later)
+ERROR: unable to select packages:
+  tini (no such package):
+    required by: world[tini]
+```
+
+```
+WARNING: fetching .../v3.23/community/x86_64/APKINDEX.tar.gz: v2 database format error
+```
+
+```
+failed to compute cache key: failed to copy: httpReadSeeker: failed open: ...
+Get "https://production.cloudfront.docker.com/registry-v2/docker/registry/v2/blobs/sha256/e5/...":
+dialing production.cloudfront.docker.com:443 container via direct connection
+because Docker Desktop has no HTTPS proxy: connecting to
+production.cloudfront.docker.com:443: dial tcp: lookup production.cloudfront.docker.com: no such host
+```
+(the earlier variant names `registry-1.docker.io` instead - same fault, one hop
+earlier. The instruction BuildKit blames, e.g. `WORKDIR /app`, is irrelevant: it
+failed while materialising the base image's layers.)
+
+The first two mean the same thing: `apk` could not load a package index, so it
+reported the requested package as nonexistent. Alpine 3.21+ publishes APKINDEX in
+the new v2 format, which older `apk-tools` in Docker Desktop's VM cannot always
+parse, and a registry mirror or flaky resolver turns the rest into
+`DNS: transient error`.
+
+The third is the registry content path: the build VM can resolve
+`registry-1.docker.io` (metadata succeeds) but not
+`production.cloudfront.docker.com`, where Docker Hub redirects blob downloads.
+Read the hint it hands you - *"because Docker Desktop has no HTTPS proxy"* - a proxy
+is configured for HTTP only, so HTTPS traffic from the VM bypasses it and hits a
+resolver that cannot answer. The partial downloads (`sha256:... 10.49MB / 11.80MB`)
+are the same failure: layers stall, the build aborts, and mid-copy it reports
+`failed to compute cache key`.
+
+Confirm it from inside the VM before touching anything else:
+
+```powershell
+docker run --rm alpine sh -c "nslookup production.cloudfront.docker.com && nslookup registry-1.docker.io"
+docker info --format '{{json .RegistryConfig.Mirrors}}'   # expect []
+```
+
+If the first `nslookup` fails and the second resolves, this is purely the VM's DNS
+path for the blob CDN - no Dockerfile change can fix it. Note also that **BuildKit
+never consults `docker images`**: a `docker pull` warms the classic builder only, so
+a BuildKit build re-streams every base layer for every target. That is why targets
+whose base layers are already in the BuildKit cache (the mock servers,
+`FROM` resolved in 0.1 s) succeed while `firebase` and `api-gateway` fail in the
+same run.
+
+Fixes, in order of preference:
+
+1. If the proxy page shows an HTTP proxy but no HTTPS one (the usual cause of the
+   `no such host` variant): either fill in **Secure Web Proxy (HTTPS)** with the same
+   address, or clear both boxes so the VM uses direct system DNS. Restart Docker
+   Desktop afterwards - the VM's resolver only re-reads settings on restart.
+2. Update Docker Desktop (Settings → General → *Check for updates*). Newer builds
+   ship an `apk-tools` that reads the v2 index, and any `node:20-alpine` image
+   cached from an older pull should be refreshed with `docker compose build --pull`.
+3. Give containers a resolver that works off the corporate/VPN network:
+   Docker Desktop → Settings → Resources → Network → *DNS server* → `8.8.8.8, 1.1.1.1`.
+   The same value in the Docker Engine JSON tab is `{"dns": ["8.8.8.8", "1.1.1.1"]}`.
+4. If a registry mirror is configured for Docker Hub, remove it (or add
+   `https://index.docker.io/1.1/` as a fallback) in Docker Engine settings; broken
+   mirrors cause the slow layer downloads that turn into DNS timeouts.
+
+### Build offline-ish: pre-pull the bases, skip BuildKit
+
+Until the resolver is fixed, take the registry out of the build path. The
+`docker pull` loop retries on its own and needs no BuildKit, and
+`DOCKER_BUILDKIT=0` switches to the classic builder, which *does* use whatever is
+already in the local image store instead of resolving each tag (and each
+`# syntax=` frontend image) against the registry and re-streaming every layer:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\prepull_base_images.ps1 -Build
+docker compose up          # images are built; no --build needed
+```
+
+```bash
+./scripts/prepull_base_images.sh --build
+docker compose up
+```
+
+Without `-Build`/`--build` the scripts only pull; in that case run
+`DOCKER_BUILDKIT=0 docker compose up --build` yourself.
+
+The classic builder still runs the same `RUN` layers, so the *distro* CDNs must be
+reachable for those (npm/PyPI/Debian are separate hosts from `cloudfront.docker.com`
+and usually still work when the registry path is broken), but no base image is
+re-downloaded per target and no frontend image is fetched: `functions/Dockerfile`,
+`services/*/Dockerfile` and the local mocks carry no `# syntax=` pin. After one
+successful classic build, BuildKit's own cache is still empty, so avoid
+`docker builder prune` until Docker Desktop's proxy/DNS settings are fixed - and
+when you do upgrade a base image, use `docker compose build --pull` on a healthy
+network rather than pruning the whole builder.
+
+### CRLF line endings: `/usr/bin/env: 'bash
+': No such file or directory`
+
+A container that exits instantly with code 127 and that message - and the failing
+line being a script's shebang - is Git's `core.autocrlf=true` rewriting LF to CRLF at
+checkout on Windows, not an image problem. The repository stores LF (verified: no
+tracked file contains a CR) and `.editorconfig` asks editors for LF, but neither
+applies at checkout time; `.gitattributes` (`* text=auto eol=lf`) does.
+
+```powershell
+git ls-files --eol local/firebase/entrypoint.sh   # expect `i/lf w/lf`; `w/crlf` is the bug
+git add --renormalize .                            # store the normalised endings
+git commit -m "chore: normalise line endings via .gitattributes"
+# force the working copy to be rewritten:
+del local\firebase\entrypoint.sh
+git restore local/firebase/entrypoint.sh
+grep -c ([char]13) local/firebase/entrypoint.sh    # 0 once fixed
+```
+
+Recovery, and why the stack now also repairs itself:
+
+```powershell
+git ls-files --eol local/firebase/entrypoint.sh   # expect `i/lf w/lf`; `w/crlf` is the bug
+git config core.autocrlf false
+git add --renormalize .
+git commit -m "chore: normalise line endings"
+del local\firebase\entrypoint.sh
+git restore local/firebase/entrypoint.sh
+```
+
+`git pull` alone is already enough to boot the stack: the Compose `firebase` service
+`command` strips CRs from *each candidate entrypoint* (the bind-mounted working copy
+first, then the image copy) and execs the first one that passes `sh -n`, so a stale
+CRLF image is bypassed and the working file is repaired in place. Because that repair
+rewrites a file Git had stored with CRLF, `git status` may afterwards list
+`local/firebase/entrypoint.sh` as modified while the content matches the repo's
+bytes - commit it with `git add --renormalize .`, or `git restore` it. Run
+`docker compose up --build` once to bake a clean copy into the image.
+
+Two things that are *not* enough on their own, learned the hard way:
+
+- A CRLF script cannot self-repair when it is exec'd: the kernel rejects
+  `#!/bin/sh\r` (and `#!/usr/bin/env: 'bash\r'`) before any line of the script runs.
+  The repair must live outside the file (Compose `command`, image build).
+- `local/firebase/entrypoint.sh` is POSIX sh, one statement per line: multi-line
+  constructs (`if x && y \` + continuation, `ARGS=(...)`) make the parser see
+  `then\r` / treat `((` as arithmetic and fail, so keep the script readable by
+  dash even with CRLF, and avoid bash arrays.
+
+Any other script mounted into a container is equally affected; strip CR at the call
+site the same way, or invoke it as `sh file.sh` only if it is one-statement-per-line
+POSIX sh.
+
+**The repository no longer depends on runtime package installs in the API gateway
+image**: the gateway moved from `node:20-alpine` to `node:20-bookworm-slim` and the
+`apk add tini` layer was dropped, so a rebuild of `api-gateway` now only needs the
+base image and `npm`. The Debian base is also the one the local Firebase emulator
+image already downloads, so the two builds share the layer cache. Signal handling is
+unchanged: `docker compose` delivers `SIGTERM`/`SIGINT` straight to the Node process,
+which installs handlers for both, and Cloud Run's sandbox reaps orphans itself.
+
+A third failure mode, `No matching distribution found for <package>`, is not network
+related: it means a requirements file lists a package that does not exist on PyPI.
+`functions/common/requirements.txt` is vendored into every function image and into
+`requirements-dev.txt`, so a stray local edit there breaks all four function builds
+at once. Recover with a clean copy and verify:
+
+```bash
+git checkout -- functions/common/requirements.txt
+# every pin below must exist on PyPI, e.g.:
+python -c "import json,urllib.request as u; d=json.load(u.urlopen('https://pypi.org/pypi/protobuf/json')); print('4.25.3' in d['releases'])"
+```
+
+After changing `functions/common/requirements.txt`, rebuild every Python image -
+the common layer is shared, so a partially cached stack mixes old and new SDKs and
+`pip check` in the image is what surfaces it.
 
 ## Unblock all eight cloud deployments
 

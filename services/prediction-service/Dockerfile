@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.6
 # Build context: repository root (the image needs both ml/ and this service).
 #   docker build -f services/prediction-service/Dockerfile -t prediction-service .
 
@@ -7,16 +6,20 @@ FROM python:3.10-slim AS base
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_RETRIES=8 \
+    PIP_TIMEOUT=120
 
 WORKDIR /app
 
 # libgomp is required by XGBoost's multi-threaded histogram implementation.
-RUN apt-get update \
+RUN apt-get update -o Acquire::Retries=3 \
     && apt-get install -y --no-install-recommends build-essential libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+# See functions/Dockerfile: pip is intentionally not upgraded, so the pinned
+# dependency layers stay deterministic and cache-friendly.
+RUN pip install --no-cache-dir --prefer-binary "setuptools>=68" wheel
 
 COPY functions/common/requirements.txt /tmp/common-requirements.txt
 RUN pip install --no-cache-dir --prefer-binary -r /tmp/common-requirements.txt

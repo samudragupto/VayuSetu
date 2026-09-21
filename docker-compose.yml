@@ -36,6 +36,17 @@ x-twilio-env: &twilio-env
 services:
   firebase:
     build: ./local/firebase
+    # The repository root is mounted at /workspace, so the script that runs is the
+    # working copy, and on a Windows checkout with core.autocrlf=true (or in an image
+    # built from such a tree) that copy can contain CRLF - which is what produced
+    # `/usr/bin/env: 'bash\r': No such file or directory` and exit 127.
+    # So: strip CRs from each candidate entrypoint, then exec the first one that
+    # passes `sh -n` (a stale CRLF+bash array script does not, and is skipped). This
+    # repairs the working copy in place, so it also fixes a *pre-rebuild* image:
+    # `git pull` alone is enough to boot, `docker compose up --build` afterwards
+    # bakes the clean copy into the image. \x0D is a YAML escape for CR - a literal
+    # CR byte inside a double-quoted scalar would be folded into a space.
+    command: ['sh', '-c', "for f in /workspace/local/firebase/entrypoint.sh /usr/local/bin/entrypoint.sh; do sed -i \"s/\x0D$//\" \"$f\" 2>/dev/null; if [ -f \"$f\" ] && sh -n \"$f\" 2>/dev/null; then exec \"$f\"; fi; done; for f in /workspace/local/firebase/entrypoint.sh /usr/local/bin/entrypoint.sh; do if [ -f \"$f\" ]; then exec sh \"$f\"; fi; done; echo 'firebase: no usable entrypoint.sh' >&2; exit 70"]
     environment:
       GCLOUD_PROJECT: ${LOCAL_PROJECT_ID:-vayusetu-local}
       PROCESS_IMAGE_URL: http://fn-process-image:8080
