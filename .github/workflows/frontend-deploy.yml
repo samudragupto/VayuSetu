@@ -10,6 +10,7 @@ on:
       - "firestore.indexes.json"
       - "storage.rules"
       - ".github/workflows/frontend-deploy.yml"
+      - "scripts/check_deploy_config.sh"
   pull_request:
     branches: [main]
     paths:
@@ -19,6 +20,7 @@ on:
       - "firestore.indexes.json"
       - "storage.rules"
       - ".github/workflows/frontend-deploy.yml"
+      - "scripts/check_deploy_config.sh"
   workflow_dispatch:
 
 permissions:
@@ -101,6 +103,13 @@ jobs:
         with:
           name: frontend-out
           path: frontend/out
+
+      - name: Validate deployment configuration
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+        run: bash "$GITHUB_WORKSPACE/scripts/check_deploy_config.sh" frontend
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2

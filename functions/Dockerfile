@@ -11,29 +11,42 @@
 
 FROM python:3.10-slim AS base
 
-ARG FUNCTION_DIR
-ARG FUNCTION_TARGET
-ARG FUNCTION_SIGNATURE_TYPE=cloudevent
-
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PORT=8080 \
-    FUNCTION_TARGET=${FUNCTION_TARGET} \
-    FUNCTION_SIGNATURE_TYPE=${FUNCTION_SIGNATURE_TYPE}
-
-RUN test -n "${FUNCTION_DIR}" || (echo "FUNCTION_DIR build argument is required" && exit 1)
+    PORT=8080
 
 RUN groupadd --system app && useradd --system --gid app --home-dir /app app
 WORKDIR /app
 
-# Install dependencies first to benefit from layer caching.
+# Build tools are a fallback for packages without wheels on the target platform.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# Keep the common layer reusable across all four functions.
 COPY functions/common/requirements.txt /tmp/common-requirements.txt
+RUN pip install --no-cache-dir --prefer-binary -r /tmp/common-requirements.txt
+
+# Declare function-specific args after the shared layers to preserve their cache.
+ARG FUNCTION_DIR
+RUN test -n "${FUNCTION_DIR}" || (echo "FUNCTION_DIR build argument is required" && exit 1)
+
+# Constraints prevent this separate install from upgrading the shared SDK pins.
 COPY functions/${FUNCTION_DIR}/requirements.txt /tmp/function-requirements.txt
-RUN pip install --upgrade pip \
-    && pip install -r /tmp/common-requirements.txt -r /tmp/function-requirements.txt \
-    && pip install "functions-framework>=3.8,<4"
+RUN pip install --no-cache-dir --prefer-binary \
+    -c /tmp/common-requirements.txt -r /tmp/function-requirements.txt \
+    && pip check
+
+# functions-framework==3.8.1 is already installed by each function's requirements.
+
+ARG FUNCTION_TARGET
+ARG FUNCTION_SIGNATURE_TYPE=cloudevent
+ENV FUNCTION_TARGET=${FUNCTION_TARGET} \
+    FUNCTION_SIGNATURE_TYPE=${FUNCTION_SIGNATURE_TYPE}
 
 # Function source plus the vendored shared package.
 COPY functions/${FUNCTION_DIR}/ /app/

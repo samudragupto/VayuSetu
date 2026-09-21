@@ -254,6 +254,8 @@ terraform output github_repository_variables      # copy these into GitHub
 
 Terraform creates the APIs, three buckets with lifecycle rules, Firestore (Native mode) with indexes and the TTL policy, the BigQuery dataset with four partitioned tables and the `fused_observations` view, six Secret Manager secrets, least-privilege service accounts and IAM bindings, Artifact Registry, both Cloud Run services (with placeholder images), the Cloud Scheduler job and the Workload Identity Federation pool for GitHub Actions. Sensitive variables can be supplied through `TF_VAR_*` environment variables instead of the tfvars file.
 
+For dependency-resolution fixes, clean Docker rebuilds, first-time OIDC bootstrap, and failed-check recovery, see [Build and deployment runbook](docs/BUILD_AND_DEPLOY.md).
+
 ### 3. Configure GitHub Actions
 
 Repository **variables** (from `terraform output github_repository_variables` plus a few frontend values):

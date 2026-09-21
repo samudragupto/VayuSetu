@@ -13,11 +13,18 @@ WORKDIR /app
 
 # libgomp is required by XGBoost's multi-threaded histogram implementation.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libgomp1 \
+    && apt-get install -y --no-install-recommends build-essential libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY services/prediction-service/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+COPY functions/common/requirements.txt /tmp/common-requirements.txt
+RUN pip install --no-cache-dir --prefer-binary -r /tmp/common-requirements.txt
+
+COPY services/prediction-service/requirements.txt /tmp/function-requirements.txt
+RUN pip install --no-cache-dir --prefer-binary \
+    -c /tmp/common-requirements.txt -r /tmp/function-requirements.txt \
+    && pip check
 
 # Shared feature engineering library and training entry point.
 COPY ml/vayusetu_ml ./vayusetu_ml
