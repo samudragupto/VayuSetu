@@ -168,12 +168,16 @@ not the code. Three signatures and what they mean:
   build container could not reach a package CDN. Set a working resolver
   (Settings → Resources → Network → DNS server, e.g. `8.8.8.8, 1.1.1.1`), update
   Docker Desktop, rerun `docker compose build --pull`.
-- `lookup registry-1.docker.io: no such host` (often with *"Docker Desktop has no
-  HTTPS proxy"*) → the VM cannot reach the registry. Docker Desktop → Resources →
-  Proxies: set **Secure Web Proxy (HTTPS)** to the same address as the HTTP one, or
-  clear both, then restart Docker Desktop. To build anyway:
-  `powershell -File scripts\prepull_base_images.ps1` then
-  `$env:DOCKER_BUILDKIT=0; docker compose up --build`.
+- `lookup registry-1.docker.io: no such host` or
+  `lookup production.cloudfront.docker.com: no such host`, both with *"Docker Desktop
+  has no HTTPS proxy"* → the VM cannot download image layers. Docker Desktop →
+  Resources → Proxies: set **Secure Web Proxy (HTTPS)** to the same address as the
+  HTTP one (or clear both), then restart Docker Desktop. To build meanwhile -
+  BuildKit never uses `docker pull`, the classic builder does:
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File scripts\prepull_base_images.ps1 -Build
+  docker compose up          # no --build needed; images are already built
+  ```
 - `No matching distribution found for <package>` → a requirements file lists a
   package PyPI does not know; that one is a real repo problem.
 

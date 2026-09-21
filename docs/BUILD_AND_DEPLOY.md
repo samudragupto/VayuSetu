@@ -88,8 +88,11 @@ cd /path/to/VayuSetu
 docker compose config --quiet
 
 docker compose down --remove-orphans
-# Remove unused build cache; confirm the shared-cache impact before running.
-docker builder prune --all --force
+# WARNING: this deletes BuildKit's copy of the base-image layers, and BuildKit does
+# not fall back to `docker pull` - every target re-downloads ~120 MB from
+# production.cloudfront.docker.com afterwards. Skip it while the registry path is
+# flaky; `--no-cache` alone rebuilds without losing the base layers.
+docker builder prune --all --force   # only when you really need the disk space
 # If using a separate Buildx builder, also clear that builder's cache:
 docker buildx prune --all --force
 
@@ -140,11 +143,14 @@ WARNING: fetching .../v3.23/community/x86_64/APKINDEX.tar.gz: v2 database format
 
 ```
 failed to compute cache key: failed to copy: httpReadSeeker: failed open: ...
-Get "https://registry-1.docker.io/v2/library/node/blobs/sha256:...":
-dialing registry-1.docker.io:443 container via direct connection because
-Docker Desktop has no HTTPS proxy: connecting to registry-1.docker.io:443:
-dial tcp: lookup registry-1.docker.io: no such host
+Get "https://production.cloudfront.docker.com/registry-v2/docker/registry/v2/blobs/sha256/e5/...":
+dialing production.cloudfront.docker.com:443 container via direct connection
+because Docker Desktop has no HTTPS proxy: connecting to
+production.cloudfront.docker.com:443: dial tcp: lookup production.cloudfront.docker.com: no such host
 ```
+(the earlier variant names `registry-1.docker.io` instead - same fault, one hop
+earlier. The instruction BuildKit blames, e.g. `WORKDIR /app`, is irrelevant: it
+failed while materialising the base image's layers.)
 
 The first two mean the same thing: `apk` could not load a package index, so it
 reported the requested package as nonexistent. Alpine 3.21+ publishes APKINDEX in
@@ -152,12 +158,29 @@ the new v2 format, which older `apk-tools` in Docker Desktop's VM cannot always
 parse, and a registry mirror or flaky resolver turns the rest into
 `DNS: transient error`.
 
-The third is the registry itself: the build VM cannot resolve `registry-1.docker.io`
-while fetching base-image layers. Read the hint it hands you - *"because Docker
-Desktop has no HTTPS proxy"* - a proxy is configured for HTTP only, so HTTPS traffic
-from the VM bypasses it and hits a resolver that cannot answer. The partial
-downloads (`sha256:... 10.49MB / 11.80MB`) are the same failure: layers stall, the
-build aborts, and mid-copy it reports `failed to compute cache key`.
+The third is the registry content path: the build VM can resolve
+`registry-1.docker.io` (metadata succeeds) but not
+`production.cloudfront.docker.com`, where Docker Hub redirects blob downloads.
+Read the hint it hands you - *"because Docker Desktop has no HTTPS proxy"* - a proxy
+is configured for HTTP only, so HTTPS traffic from the VM bypasses it and hits a
+resolver that cannot answer. The partial downloads (`sha256:... 10.49MB / 11.80MB`)
+are the same failure: layers stall, the build aborts, and mid-copy it reports
+`failed to compute cache key`.
+
+Confirm it from inside the VM before touching anything else:
+
+```powershell
+docker run --rm alpine sh -c "nslookup production.cloudfront.docker.com && nslookup registry-1.docker.io"
+docker info --format '{{json .RegistryConfig.Mirrors}}'   # expect []
+```
+
+If the first `nslookup` fails and the second resolves, this is purely the VM's DNS
+path for the blob CDN - no Dockerfile change can fix it. Note also that **BuildKit
+never consults `docker images`**: a `docker pull` warms the classic builder only, so
+a BuildKit build re-streams every base layer for every target. That is why targets
+whose base layers are already in the BuildKit cache (the mock servers,
+`FROM` resolved in 0.1 s) succeed while `firebase` and `api-gateway` fail in the
+same run.
 
 Fixes, in order of preference:
 
@@ -179,26 +202,32 @@ Fixes, in order of preference:
 
 Until the resolver is fixed, take the registry out of the build path. The
 `docker pull` loop retries on its own and needs no BuildKit, and
-`DOCKER_BUILDKIT=0` makes Compose use whatever is already in the local image store
-instead of resolving each tag (and each `# syntax=` frontend image) against
-`registry-1.docker.io` first:
+`DOCKER_BUILDKIT=0` switches to the classic builder, which *does* use whatever is
+already in the local image store instead of resolving each tag (and each
+`# syntax=` frontend image) against the registry and re-streaming every layer:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\prepull_base_images.ps1
-$env:DOCKER_BUILDKIT=0
-docker compose up --build
+powershell -ExecutionPolicy Bypass -File scripts\prepull_base_images.ps1 -Build
+docker compose up          # images are built; no --build needed
 ```
 
 ```bash
-./scripts/prepull_base_images.sh
-DOCKER_BUILDKIT=0 docker compose up --build
+./scripts/prepull_base_images.sh --build
+docker compose up
 ```
 
-The classic builder still runs the same `RUN` layers, so npm/PyPI/Debian access is
-needed for those, but nothing is re-downloaded per target and no frontend image is
-fetched: `functions/Dockerfile`, `services/*/Dockerfile` and the local mocks carry no
-`# syntax=` pin, and the shared Python/Node layers are cached after the first pass.
-Keep `docker compose build --pull` for the day you deliberately upgrade a base image.
+Without `-Build`/`--build` the scripts only pull; in that case run
+`DOCKER_BUILDKIT=0 docker compose up --build` yourself.
+
+The classic builder still runs the same `RUN` layers, so the *distro* CDNs must be
+reachable for those (npm/PyPI/Debian are separate hosts from `cloudfront.docker.com`
+and usually still work when the registry path is broken), but no base image is
+re-downloaded per target and no frontend image is fetched: `functions/Dockerfile`,
+`services/*/Dockerfile` and the local mocks carry no `# syntax=` pin. After one
+successful classic build, BuildKit's own cache is still empty, so avoid
+`docker builder prune` until Docker Desktop's proxy/DNS settings are fixed - and
+when you do upgrade a base image, use `docker compose build --pull` on a healthy
+network rather than pruning the whole builder.
 
 **The repository no longer depends on runtime package installs in the API gateway
 image**: the gateway moved from `node:20-alpine` to `node:20-bookworm-slim` and the
