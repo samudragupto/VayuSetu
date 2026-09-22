@@ -86,6 +86,36 @@ services:
     ports:
       - "4443:4443"
 
+  # The mounted fixture directory only preloads the bucket names present there.
+  # A copied .env can select a different (production-shaped) bucket name, so
+  # create the configured demo bucket before the gateway accepts an image;
+  # otherwise the report is correctly recorded but its upload fails with HTTP 404.
+  gcs-init:
+    image: curlimages/curl:8.10.1
+    environment:
+      GCS_PROJECT_ID: ${LOCAL_PROJECT_ID:-vayusetu-local}
+      GCS_BUCKET: ${CITIZEN_IMAGES_BUCKET:-vayusetu-local-citizen-images}
+    command:
+      - sh
+      - -c
+      - |
+        set -eu
+        until curl -fsS "http://gcs:4443/storage/v1/b?project=$$GCS_PROJECT_ID" >/dev/null; do
+          sleep 1
+        done
+        status=$$(curl -sS -o /tmp/gcs-bucket-response -w "%{http_code}" \
+          -X POST "http://gcs:4443/storage/v1/b?project=$$GCS_PROJECT_ID" \
+          -H 'content-type: application/json' \
+          --data "{\"name\":\"$$GCS_BUCKET\"}")
+        case "$$status" in
+          200|201|409) ;;
+          *) cat /tmp/gcs-bucket-response >&2; exit 1 ;;
+        esac
+        echo "[gcs-init] bucket $$GCS_BUCKET is ready"
+    depends_on:
+      gcs:
+        condition: service_started
+
   mock-twilio:
     build: ./local/mock-twilio
     environment:
@@ -131,6 +161,8 @@ services:
         condition: service_healthy
       gcs:
         condition: service_started
+      gcs-init:
+        condition: service_completed_successfully
       mock-twilio:
         condition: service_started
 

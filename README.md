@@ -157,8 +157,19 @@ The whole pipeline runs on a laptop without Google Cloud credentials. Docker Com
 ### Start the stack
 
 ```bash
-cp .env.example .env            # defaults are safe for local use
+cp .env.example .env            # keep the local emulator values documented below
 docker compose up --build       # first build takes a few minutes
+```
+
+The `gcs-init` one-shot service creates the configured citizen-image bucket in
+fake-gcs-server before the API gateway starts. This is important when `.env`
+contains a production-shaped bucket name from the template: the local emulator
+must have that exact bucket name or image uploads return HTTP 404. If you are
+updating an already-running stack, recreate the storage initializer and gateway
+once:
+
+```bash
+docker compose up -d --build --force-recreate gcs gcs-init api-gateway
 ```
 
 Build failures in this stack are almost always the network inside Docker Desktop,
