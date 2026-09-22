@@ -233,8 +233,13 @@ production access policy.
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt -r functions/common/requirements.txt google-cloud-firestore
 export FIRESTORE_EMULATOR_HOST=localhost:8080
-python scripts/generate_mock_data.py --reports 500 --hours 48 --clear
+python scripts/generate_mock_data.py --reports 500 --hours 48 --alert-failure-rate 0 --clear
 ```
+
+Keep the default failure rate at zero for a clean judging demo. To demonstrate
+resilience intentionally, rerun with a small value such as
+`--alert-failure-rate 0.05`; those synthetic Twilio failures are chaos-test data,
+not live delivery failures.
 
 On Windows, the host generator can be run inside the already-built `fn-batch`
 container instead of installing the pinned Python dependencies locally. This is

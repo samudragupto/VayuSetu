@@ -517,8 +517,13 @@ def matching_authorities(geohash: str) -> List[Dict[str, Any]]:
     return matched[:5]
 
 
-def build_alerts(rng: random.Random, hotspots: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """Return (alert_log rows, alert_state rows) for every hotspot marked as sent."""
+def build_alerts(rng: random.Random, hotspots: List[Dict[str, Any]], failure_rate: float = 0.0) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Return alert rows and cooldown state for every hotspot marked as sent.
+
+    Demo data is clean by default so a judge does not mistake synthetic chaos
+    for a broken alerting pipeline. Pass a non-zero ``failure_rate`` when the
+    retry and failure states need to be demonstrated deliberately.
+    """
     alerts: List[Dict[str, Any]] = []
     last_alert_by_cell: Dict[str, dt.datetime] = {}
     state_by_cell: Dict[str, Dict[str, Any]] = {}
@@ -544,7 +549,7 @@ def build_alerts(rng: random.Random, hotspots: List[Dict[str, Any]]) -> Tuple[Li
                 sources=", ".join(s.replace("_", " ") for s in hotspot["dominantSources"]) or "unknown",
             )
             for channel in authority["channels"]:
-                failed = rng.random() < 0.05
+                failed = rng.random() < failure_rate
                 alerts.append(
                     {
                         "_id": str(uuid.UUID(int=rng.getrandbits(128))),
@@ -634,7 +639,7 @@ def build_dataset(args: argparse.Namespace) -> Dataset:
         args.min_reports_per_cell,
         args.quiet_hours,
     )
-    dataset.alerts, dataset.alert_state = build_alerts(rng, dataset.hotspots)
+    dataset.alerts, dataset.alert_state = build_alerts(rng, dataset.hotspots, args.alert_failure_rate)
     dataset.authorities = [dict(a, createdAt=window_start, updatedAt=window_start) for a in AUTHORITIES]
     dataset.access = {
         "adminDomains": [d.strip() for d in args.admin_domain.split(",") if d.strip()],
@@ -759,6 +764,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--quiet-hours", type=float, default=0.0, help="Stop simulated batch runs this many hours before now and mark their alerts as sent, so a live batch run produces fresh, non-suppressed alerts (recommended: 3 for demos)")
     parser.add_argument("--min-reports-per-cell", type=int, default=2, help="Minimum analysed reports in a cell before a hotspot is generated")
     parser.add_argument("--alert-threshold", type=float, default=float(os.environ.get("ALERT_AQI_THRESHOLD", 300)))
+    parser.add_argument("--alert-failure-rate", type=float, default=float(os.environ.get("DEMO_ALERT_FAILURE_RATE", 0.0)), help="Synthetic alert delivery failure rate for chaos demos (default: 0; must be between 0 and 1)")
     parser.add_argument("--bucket", default=os.environ.get("CITIZEN_IMAGES_BUCKET", "vayusetu-local-citizen-images"))
     parser.add_argument("--admin-domain", default=os.environ.get("ADMIN_DOMAIN", "example.com"))
     parser.add_argument("--admin-emails", default=os.environ.get("ADMIN_EMAILS", ""))
@@ -775,6 +781,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
     if args.reports < 1 or args.hours < 6:
         logger.error("--reports must be positive and --hours at least 6")
+        return 2
+    if not 0.0 <= args.alert_failure_rate <= 1.0:
+        logger.error("--alert-failure-rate must be between 0 and 1")
         return 2
 
     dataset = build_dataset(args)
