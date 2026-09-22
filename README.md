@@ -152,7 +152,7 @@ The whole pipeline runs on a laptop without Google Cloud credentials. Docker Com
 ### Prerequisites
 
 - Docker Desktop or Docker Engine 24+ with Compose v2
-- Node.js 20 and Python 3.10+ (for running tests and the data generator on the host)
+- Node.js 20 and Python 3.10–3.12 (for running tests and the data generator on the host; the pinned grpcio version does not provide a Python 3.13 wheel)
 
 ### Start the stack
 
@@ -234,6 +234,16 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt -r functions/common/requirements.txt google-cloud-firestore
 export FIRESTORE_EMULATOR_HOST=localhost:8080
 python scripts/generate_mock_data.py --reports 500 --hours 48 --clear
+```
+
+On Windows, the host generator can be run inside the already-built `fn-batch`
+container instead of installing the pinned Python dependencies locally. This is
+particularly useful with Python 3.13, where the pinned `grpcio` version falls
+back to a native MSVC build:
+
+```powershell
+docker compose cp scripts/generate_mock_data.py fn-batch:/tmp/generate_mock_data.py
+docker compose exec -T fn-batch sh -c "PYTHONPATH=/app python /tmp/generate_mock_data.py --emulator-host firebase:8080 --project vayusetu-local --admin-domain example.com --reports 500 --hours 48 --quiet-hours 3 --clear"
 ```
 
 The generator creates 500 citizen reports, 80 pseudonymous citizens, periodic batch predictions, an escalating Delhi NCR smog event, matching authorities and a bilingual alert history. Add `--quiet-hours 3` before a live demonstration so that the next batch run produces fresh alerts that are not suppressed by the per-cell cooldown, and `--dry-run --json-out demo.json` to inspect the dataset without writing it. With the local defaults, sign in to the dashboard with any e-mail on `example.com` (the Auth emulator accepts fabricated Google accounts) to explore the data.
