@@ -201,6 +201,32 @@ Endpoints once everything is healthy:
 | http://localhost:8081/healthz | API gateway |
 | http://localhost:8090/docs | Prediction service (OpenAPI) |
 
+### Sign in locally
+
+The local Compose stack uses the reserved `example.com` domain so the Firebase
+Auth emulator can accept fabricated accounts. The Google sign-in popup can
+therefore use any verified-looking address ending in `@example.com`, including
+`raccoon.mountain.509@example.com`. The data generator writes the same domain to
+`config/access`, so the Firestore rules and dashboard stay in sync.
+
+If you copied an older `.env.example`, update its local value before restarting:
+
+```dotenv
+ADMIN_DOMAIN=example.com
+```
+
+Then recreate the dashboard and emulator containers without removing their
+volumes:
+
+```bash
+docker compose down
+docker compose up --build
+```
+
+`example.com` is an emulator-only default. Before deploying, replace it with the
+real, verified Google Workspace domain and never use the local bypass as a
+production access policy.
+
 ### Seed demo data
 
 ```bash
@@ -210,7 +236,7 @@ export FIRESTORE_EMULATOR_HOST=localhost:8080
 python scripts/generate_mock_data.py --reports 500 --hours 48 --clear
 ```
 
-The generator creates 500 citizen reports, 80 pseudonymous citizens, periodic batch predictions, an escalating Delhi NCR smog event, matching authorities and a bilingual alert history. Add `--quiet-hours 3` before a live demonstration so that the next batch run produces fresh alerts that are not suppressed by the per-cell cooldown, and `--dry-run --json-out demo.json` to inspect the dataset without writing it. Sign in to the dashboard with any e-mail on `example.gov.in` (the Auth emulator accepts fabricated Google accounts) to explore the data.
+The generator creates 500 citizen reports, 80 pseudonymous citizens, periodic batch predictions, an escalating Delhi NCR smog event, matching authorities and a bilingual alert history. Add `--quiet-hours 3` before a live demonstration so that the next batch run produces fresh alerts that are not suppressed by the per-cell cooldown, and `--dry-run --json-out demo.json` to inspect the dataset without writing it. With the local defaults, sign in to the dashboard with any e-mail on `example.com` (the Auth emulator accepts fabricated Google accounts) to explore the data.
 
 ### Send a WhatsApp message end-to-end
 

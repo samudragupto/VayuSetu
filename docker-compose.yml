@@ -46,7 +46,7 @@ services:
     # `git pull` alone is enough to boot, `docker compose up --build` afterwards
     # bakes the clean copy into the image. \x0D is a YAML escape for CR - a literal
     # CR byte inside a double-quoted scalar would be folded into a space.
-    command: ['sh', '-c', "for f in /workspace/local/firebase/entrypoint.sh /usr/local/bin/entrypoint.sh; do sed -i \"s/\x0D$//\" \"$f\" 2>/dev/null; if [ -f \"$f\" ] && sh -n \"$f\" 2>/dev/null; then exec \"$f\"; fi; done; for f in /workspace/local/firebase/entrypoint.sh /usr/local/bin/entrypoint.sh; do if [ -f \"$f\" ]; then exec sh \"$f\"; fi; done; echo 'firebase: no usable entrypoint.sh' >&2; exit 70"]
+    command: ['sh', '-c', "for f in /workspace/local/firebase/entrypoint.sh /usr/local/bin/entrypoint.sh; do sed -i \"s/\x0D$//\" \"$$f\" 2>/dev/null; if [ -f \"$$f\" ] && sh -n \"$$f\" 2>/dev/null; then exec \"$$f\"; fi; done; for f in /workspace/local/firebase/entrypoint.sh /usr/local/bin/entrypoint.sh; do if [ -f \"$$f\" ]; then exec sh \"$$f\"; fi; done; echo 'firebase: no usable entrypoint.sh' >&2; exit 70"]
     environment:
       GCLOUD_PROJECT: ${LOCAL_PROJECT_ID:-vayusetu-local}
       PROCESS_IMAGE_URL: http://fn-process-image:8080
@@ -119,7 +119,9 @@ services:
       TWILIO_VALIDATE_SIGNATURE: "false"
       TWILIO_MEDIA_BASE_URL: http://mock-twilio:4010
       PHONE_HASH_SECRET: ${PHONE_HASH_SECRET:-local-development-phone-hash-secret}
-      ADMIN_DOMAIN: ${ADMIN_DOMAIN:-example.gov.in}
+      # The reserved example.com domain is for the Auth emulator only. Set
+      # ADMIN_DOMAIN to the real Workspace domain before any deployed run.
+      ADMIN_DOMAIN: ${ADMIN_DOMAIN:-example.com}
       HOTSPOT_GEOHASH_PRECISION: ${HOTSPOT_GEOHASH_PRECISION:-5}
       RATE_LIMIT_PER_HOUR: ${RATE_LIMIT_PER_HOUR:-120}
     ports:
@@ -269,7 +271,7 @@ services:
       NEXT_PUBLIC_FIREBASE_APP_ID: ${NEXT_PUBLIC_FIREBASE_APP_ID:-}
       NEXT_PUBLIC_FIRESTORE_EMULATOR_HOST: localhost:8080
       NEXT_PUBLIC_AUTH_EMULATOR_URL: http://localhost:9099
-      NEXT_PUBLIC_ADMIN_DOMAIN: ${ADMIN_DOMAIN:-example.gov.in}
+      NEXT_PUBLIC_ADMIN_DOMAIN: ${ADMIN_DOMAIN:-example.com}
       NEXT_PUBLIC_API_GATEWAY_URL: http://localhost:8081
       NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: ${NEXT_PUBLIC_GOOGLE_MAPS_API_KEY:-}
       NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID: ${NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID:-}

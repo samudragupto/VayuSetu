@@ -760,7 +760,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--min-reports-per-cell", type=int, default=2, help="Minimum analysed reports in a cell before a hotspot is generated")
     parser.add_argument("--alert-threshold", type=float, default=float(os.environ.get("ALERT_AQI_THRESHOLD", 300)))
     parser.add_argument("--bucket", default=os.environ.get("CITIZEN_IMAGES_BUCKET", "vayusetu-local-citizen-images"))
-    parser.add_argument("--admin-domain", default=os.environ.get("ADMIN_DOMAIN", "example.gov.in"))
+    parser.add_argument("--admin-domain", default=os.environ.get("ADMIN_DOMAIN", "example.com"))
     parser.add_argument("--admin-emails", default=os.environ.get("ADMIN_EMAILS", ""))
     parser.add_argument("--phone-hash-secret", default=os.environ.get("PHONE_HASH_SECRET", "local-development-phone-hash-secret"))
     parser.add_argument("--seed", type=int, default=42)

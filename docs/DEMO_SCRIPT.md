@@ -15,7 +15,7 @@ Total running time: 4:00. Timings are cumulative. One presenter speaks; a second
 
    `--quiet-hours 3` stops the simulated batch runs three hours before the present and records their alerts as already sent, so the live batch run in section 4 produces fresh hotspots whose alerts are not suppressed by the three-hour cooldown.
 
-3. Sign in to the dashboard with an account on the administrator domain (the Auth emulator lets you create `ops@example.gov.in` from the Google sign-in popup) and leave it on the **Overview** page with the last 48 hours selected; the map centres on Delhi NCR.
+3. Sign in to the dashboard with an account on the local administrator domain (the Auth emulator accepts a fabricated address such as `ops@example.com` or `raccoon.mountain.509@example.com`) and leave it on the **Overview** page with the last 48 hours selected; the map centres on Delhi NCR.
 4. Clear the mock Twilio log so the alert section starts empty: `curl -X DELETE localhost:4010/_admin/log`.
 5. Prepare a terminal with the three commands from section 3 pasted into a scratch file, and open the Emulator UI on the `citizen_reports` collection sorted by `createdAt` descending.
 6. Open `docs/PITCH_DECK.md` slide 1 on the presentation display. Mute notifications.
@@ -136,5 +136,5 @@ curl -s -X POST localhost:8085 -H 'content-type: application/json' \
 
 - If the Gemini mock returns a 429 during the demo (it simulates rate limits at a configurable rate), say: "That is a simulated free-tier rate limit; the function is backing off and will retry." The report will complete on the next attempt. Set `MOCK_RATE_LIMIT_PROBABILITY=0` in `.env` before the demo to disable this behaviour.
 - If the batch job reports zero pending alerts, or the alert function logs `suppressed_cooldown`, re-seed with `python scripts/generate_mock_data.py --reports 500 --hours 48 --quiet-hours 3 --clear` (which resets the `alert_state` cooldown records) or lower `ALERT_AQI_THRESHOLD` in `.env` and restart the `fn-batch` and `fn-alerts` services.
-- If the dashboard sign-in fails in the Auth emulator, create a user from the Emulator UI Authentication tab; any verified address on `example.gov.in` is accepted by the security rules.
+- If the dashboard sign-in fails in the Auth emulator, check that `.env` contains `ADMIN_DOMAIN=example.com`, recreate the stack, and use an address ending in `@example.com`. If demo data was seeded with a different domain, rerun the generator after updating `.env`; `config/access` must match the dashboard domain.
 - Keep the Twilio and Google AI Studio keys out of the frame at all times; the local stack does not need them.
