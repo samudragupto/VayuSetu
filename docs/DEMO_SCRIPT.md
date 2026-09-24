@@ -10,7 +10,7 @@ Total running time: 4:00. Timings are cumulative. One presenter speaks; a second
    ```bash
    source .venv/bin/activate
    export FIRESTORE_EMULATOR_HOST=localhost:8080
-   python scripts/generate_mock_data.py --reports 500 --hours 48 --quiet-hours 3 --clear
+python scripts/generate_mock_data.py --reports 500 --hours 48 --quiet-hours 3 --alert-failure-rate 0 --admin-domain example.com --clear
    ```
 
    `--quiet-hours 3` stops the simulated batch runs three hours before the present and records their alerts as already sent, so the live batch run in section 4 produces fresh hotspots whose alerts are not suppressed by the three-hour cooldown.
@@ -135,6 +135,6 @@ curl -s -X POST localhost:8085 -H 'content-type: application/json' \
 ## Recovery notes
 
 - If the Gemini mock returns a 429 during the demo (it simulates rate limits at a configurable rate), say: "That is a simulated free-tier rate limit; the function is backing off and will retry." The report will complete on the next attempt. Set `MOCK_RATE_LIMIT_PROBABILITY=0` in `.env` before the demo to disable this behaviour.
-- If the batch job reports zero pending alerts, or the alert function logs `suppressed_cooldown`, re-seed with `python scripts/generate_mock_data.py --reports 500 --hours 48 --quiet-hours 3 --clear` (which resets the `alert_state` cooldown records) or lower `ALERT_AQI_THRESHOLD` in `.env` and restart the `fn-batch` and `fn-alerts` services.
-- If the dashboard sign-in fails in the Auth emulator, check that `.env` contains `ADMIN_DOMAIN=example.com`, recreate the stack, and use an address ending in `@example.com`. If demo data was seeded with a different domain, rerun the generator after updating `.env`; `config/access` must match the dashboard domain.
+- If the batch job reports zero pending alerts, or the alert function logs `suppressed_cooldown`, re-seed with `python scripts/generate_mock_data.py --reports 500 --hours 48 --quiet-hours 3 --alert-failure-rate 0 --admin-domain example.com --clear` (which resets the `alert_state` cooldown records) or lower `ALERT_AQI_THRESHOLD` in `.env` and restart the `fn-batch` and `fn-alerts` services.
+- If the dashboard sign-in fails in the Auth emulator, check that `.env` contains `LOCAL_ADMIN_DOMAIN=example.com`, recreate the stack, and use an address ending in `@example.com`. If demo data was seeded with a different domain, rerun the generator with `--admin-domain example.com`; `config/access` must match the dashboard domain.
 - Keep the Twilio and Google AI Studio keys out of the frame at all times; the local stack does not need them.

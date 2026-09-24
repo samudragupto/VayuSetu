@@ -6,8 +6,8 @@ import { AuthProvider } from "@/hooks/useAuth";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "VayuSetu Authority Dashboard",
-  description: "Hyper-local air quality intelligence from citizen reports, satellite data and AI forecasts.",
+  title: "VayuSetu · Authority control room",
+  description: "A clear operational view of citizen air-quality signals, satellite context and 12-hour forecasts.",
   applicationName: "VayuSetu",
 };
 
