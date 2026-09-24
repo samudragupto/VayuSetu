@@ -31,6 +31,12 @@ function parseCenter(value: string | undefined): { lat: number; lng: number } {
   return { lat: 28.6139, lng: 77.209 };
 }
 
+const useEmulators = (process.env.NEXT_PUBLIC_USE_EMULATORS ?? "false").toLowerCase() === "true";
+const configuredAdminDomains = (process.env.NEXT_PUBLIC_ADMIN_DOMAIN ?? "")
+  .split(",")
+  .map((domain) => domain.trim().toLowerCase())
+  .filter(Boolean);
+
 export const config: DashboardConfig = {
   firebase: {
     apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY ?? "",
@@ -42,13 +48,12 @@ export const config: DashboardConfig = {
   },
   googleMapsApiKey: process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "",
   googleMapsMapId: process.env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID || undefined,
-  adminDomains: (process.env.NEXT_PUBLIC_ADMIN_DOMAIN ?? "")
-    .split(",")
-    .map((domain) => domain.trim().toLowerCase())
-    .filter(Boolean),
+  // A local build still has an explicit allow-list. Production builds fail
+  // closed when NEXT_PUBLIC_ADMIN_DOMAIN is missing.
+  adminDomains: configuredAdminDomains.length > 0 ? configuredAdminDomains : useEmulators ? ["example.com"] : [],
   apiGatewayUrl: (process.env.NEXT_PUBLIC_API_GATEWAY_URL ?? "").replace(/\/+$/, ""),
   defaultCenter: parseCenter(process.env.NEXT_PUBLIC_DEFAULT_MAP_CENTER),
-  useEmulators: (process.env.NEXT_PUBLIC_USE_EMULATORS ?? "false").toLowerCase() === "true",
+  useEmulators,
   firestoreEmulatorHost: process.env.NEXT_PUBLIC_FIRESTORE_EMULATOR_HOST ?? "localhost:8080",
   authEmulatorUrl: process.env.NEXT_PUBLIC_AUTH_EMULATOR_URL ?? "http://localhost:9099",
 };
@@ -61,10 +66,6 @@ export function isAdminEmail(email: string | null | undefined): boolean {
   if (!email) {
     return false;
   }
-  if (config.adminDomains.length === 0) {
-    // Without a configured domain the dashboard only works against emulators.
-    return config.useEmulators;
-  }
-  const domain = email.toLowerCase().split("@")[1] ?? "";
+  const domain = email.trim().toLowerCase().split("@")[1] ?? "";
   return config.adminDomains.includes(domain);
 }

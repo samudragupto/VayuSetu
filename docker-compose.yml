@@ -46,7 +46,7 @@ services:
     # `git pull` alone is enough to boot, `docker compose up --build` afterwards
     # bakes the clean copy into the image. \x0D is a YAML escape for CR - a literal
     # CR byte inside a double-quoted scalar would be folded into a space.
-    command: ['sh', '-c', "for f in /workspace/local/firebase/entrypoint.sh /usr/local/bin/entrypoint.sh; do sed -i \"s/\x0D$//\" \"$f\" 2>/dev/null; if [ -f \"$f\" ] && sh -n \"$f\" 2>/dev/null; then exec \"$f\"; fi; done; for f in /workspace/local/firebase/entrypoint.sh /usr/local/bin/entrypoint.sh; do if [ -f \"$f\" ]; then exec sh \"$f\"; fi; done; echo 'firebase: no usable entrypoint.sh' >&2; exit 70"]
+    command: ['sh', '-c', "for f in /workspace/local/firebase/entrypoint.sh /usr/local/bin/entrypoint.sh; do sed -i \"s/\x0D$//\" \"$$f\" 2>/dev/null; if [ -f \"$$f\" ] && sh -n \"$$f\" 2>/dev/null; then exec \"$$f\"; fi; done; for f in /workspace/local/firebase/entrypoint.sh /usr/local/bin/entrypoint.sh; do if [ -f \"$$f\" ]; then exec sh \"$$f\"; fi; done; echo 'firebase: no usable entrypoint.sh' >&2; exit 70"]
     environment:
       GCLOUD_PROJECT: ${LOCAL_PROJECT_ID:-vayusetu-local}
       PROCESS_IMAGE_URL: http://fn-process-image:8080
@@ -86,6 +86,36 @@ services:
     ports:
       - "4443:4443"
 
+  # The mounted fixture directory only preloads the bucket names present there.
+  # A copied .env can select a different (production-shaped) bucket name, so
+  # create the configured demo bucket before the gateway accepts an image;
+  # otherwise the report is correctly recorded but its upload fails with HTTP 404.
+  gcs-init:
+    image: curlimages/curl:8.10.1
+    environment:
+      GCS_PROJECT_ID: ${LOCAL_PROJECT_ID:-vayusetu-local}
+      GCS_BUCKET: ${CITIZEN_IMAGES_BUCKET:-vayusetu-local-citizen-images}
+    command:
+      - sh
+      - -c
+      - |
+        set -eu
+        until curl -fsS "http://gcs:4443/storage/v1/b?project=$$GCS_PROJECT_ID" >/dev/null; do
+          sleep 1
+        done
+        status=$$(curl -sS -o /tmp/gcs-bucket-response -w "%{http_code}" \
+          -X POST "http://gcs:4443/storage/v1/b?project=$$GCS_PROJECT_ID" \
+          -H 'content-type: application/json' \
+          --data "{\"name\":\"$$GCS_BUCKET\"}")
+        case "$$status" in
+          200|201|409) ;;
+          *) cat /tmp/gcs-bucket-response >&2; exit 1 ;;
+        esac
+        echo "[gcs-init] bucket $$GCS_BUCKET is ready"
+    depends_on:
+      gcs:
+        condition: service_started
+
   mock-twilio:
     build: ./local/mock-twilio
     environment:
@@ -119,7 +149,9 @@ services:
       TWILIO_VALIDATE_SIGNATURE: "false"
       TWILIO_MEDIA_BASE_URL: http://mock-twilio:4010
       PHONE_HASH_SECRET: ${PHONE_HASH_SECRET:-local-development-phone-hash-secret}
-      ADMIN_DOMAIN: ${ADMIN_DOMAIN:-example.gov.in}
+      # Keep local emulator access separate from the production Workspace policy.
+      # Set LOCAL_ADMIN_DOMAIN when a different demo domain is needed.
+      ADMIN_DOMAIN: ${LOCAL_ADMIN_DOMAIN:-example.com}
       HOTSPOT_GEOHASH_PRECISION: ${HOTSPOT_GEOHASH_PRECISION:-5}
       RATE_LIMIT_PER_HOUR: ${RATE_LIMIT_PER_HOUR:-120}
     ports:
@@ -129,6 +161,8 @@ services:
         condition: service_healthy
       gcs:
         condition: service_started
+      gcs-init:
+        condition: service_completed_successfully
       mock-twilio:
         condition: service_started
 
@@ -269,7 +303,8 @@ services:
       NEXT_PUBLIC_FIREBASE_APP_ID: ${NEXT_PUBLIC_FIREBASE_APP_ID:-}
       NEXT_PUBLIC_FIRESTORE_EMULATOR_HOST: localhost:8080
       NEXT_PUBLIC_AUTH_EMULATOR_URL: http://localhost:9099
-      NEXT_PUBLIC_ADMIN_DOMAIN: ${ADMIN_DOMAIN:-example.gov.in}
+      # This is intentionally separate from the production ADMIN_DOMAIN value.
+      NEXT_PUBLIC_ADMIN_DOMAIN: ${LOCAL_ADMIN_DOMAIN:-example.com}
       NEXT_PUBLIC_API_GATEWAY_URL: http://localhost:8081
       NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: ${NEXT_PUBLIC_GOOGLE_MAPS_API_KEY:-}
       NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID: ${NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID:-}

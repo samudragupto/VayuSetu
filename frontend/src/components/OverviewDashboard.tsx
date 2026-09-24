@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 
 import { useAlerts, useHotspots, useReports } from "@/hooks/useCollection";
-import { buildTrend, cityLeaderboard, computeStats, countCategories, countSources, latestHotspotsPerCell } from "@/lib/analytics";
+import { buildTrend, cityLeaderboard, computeStats, countCategories, countSources, labelForSource, latestHotspotsPerCell } from "@/lib/analytics";
 import { ALERT_THRESHOLD, bandForAqi } from "@/lib/aqi";
 
 import { AppShell } from "./AppShell";
@@ -29,9 +29,45 @@ export function OverviewDashboard() {
   const error = reports.error ?? hotspots.error ?? alerts.error;
   const averageBand = bandForAqi(stats.averageAqi);
   const maxBand = bandForAqi(stats.maxPredictedAqi);
+  const focusHotspot = latestHotspots[0] ?? null;
+  const focusBand = focusHotspot ? bandForAqi(focusHotspot.predictedAqi) : null;
+  const windowLabel = hours >= 168 ? "last 7 days" : hours >= 72 ? "last 3 days" : hours >= 24 ? "last 24 hours" : "last 6 hours";
 
   return (
     <AppShell title="Air quality overview" actions={<TimeRangeSelector hours={hours} onChange={setHours} />}>
+      <section className="mb-6 overflow-hidden rounded-2xl bg-[#0c234b] text-white shadow-[0_12px_32px_rgba(12,35,75,0.16)]" aria-label="Decision brief">
+        <div className="grid gap-7 px-5 py-6 sm:px-7 lg:grid-cols-[1fr_290px] lg:items-center lg:py-7">
+          <div>
+            <p className="eyebrow text-cyan-300">Decision brief · {windowLabel}</p>
+            <h2 className="mt-3 max-w-2xl text-2xl font-semibold leading-tight tracking-[-0.03em] sm:text-3xl">Know where to look first, before the spike reaches the street.</h2>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300">
+              VayuSetu brings the citizen signal, satellite context and model forecast together. Use the confidence and source mix as a guide for the next field decision—not as a substitute for an official station reading.
+            </p>
+            <div className="mt-5 flex flex-wrap gap-2 text-xs font-medium">
+              <span className="rounded-full border border-white/15 bg-white/[0.08] px-3 py-1.5">{stats.analyzedReports} analysed observations</span>
+              <span className="rounded-full border border-white/15 bg-white/[0.08] px-3 py-1.5">12 h forecast horizon</span>
+              <span className="rounded-full border border-white/15 bg-white/[0.08] px-3 py-1.5">Alert line AQI {ALERT_THRESHOLD}</span>
+            </div>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-white/[0.08] p-4">
+            <p className="text-xs font-medium text-slate-300">Highest forecast in view</p>
+            {focusHotspot && focusBand ? (
+              <>
+                <div className="mt-2 flex items-end justify-between gap-3">
+                  <div>
+                    <p className="text-lg font-semibold">{focusHotspot.city ?? "Unnamed area"}</p>
+                    <p className="mt-0.5 text-xs text-slate-400">{focusHotspot.reportCount} reports · {Math.round(focusHotspot.confidence * 100)}% model confidence</p>
+                  </div>
+                  <span className="rounded-lg px-2.5 py-1.5 text-lg font-bold" style={{ backgroundColor: focusBand.color, color: focusBand.textColor }}>{Math.round(focusHotspot.predictedAqi)}</span>
+                </div>
+                <p className="mt-3 text-xs leading-5 text-slate-300">{focusBand.label}. Likely sources: {focusHotspot.dominantSources.length ? focusHotspot.dominantSources.map(labelForSource).join(", ") : "mixed local sources"}.</p>
+              </>
+            ) : (
+              <p className="mt-3 text-sm leading-6 text-slate-300">Waiting for the first batch prediction in this time window.</p>
+            )}
+          </div>
+        </div>
+      </section>
       {error ? (
         <div className="mb-4">
           <ErrorState message={`Live data unavailable: ${error}`} />

@@ -72,6 +72,147 @@ function FallbackList({ hotspots, threshold }: { hotspots: PredictedHotspot[]; t
   );
 }
 
+function OfflineMap({ hotspots, reports, threshold, onSelectHotspot }: HotspotMapProps) {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const locatedReports = useMemo(() => reports.filter((report) => report.location !== null).slice(0, 500), [reports]);
+  const projection = useMemo(() => {
+    const coordinates = [
+      ...hotspots.map((hotspot) => ({ latitude: hotspot.latitude, longitude: hotspot.longitude })),
+      ...locatedReports.flatMap((report) => (report.location ? [{ latitude: report.location.latitude, longitude: report.location.longitude }] : [])),
+    ];
+    if (coordinates.length === 0) {
+      return null;
+    }
+
+    const minLatitude = Math.min(...coordinates.map((point) => point.latitude));
+    const maxLatitude = Math.max(...coordinates.map((point) => point.latitude));
+    const minLongitude = Math.min(...coordinates.map((point) => point.longitude));
+    const maxLongitude = Math.max(...coordinates.map((point) => point.longitude));
+    const latitudePadding = Math.max((maxLatitude - minLatitude) * 0.08, 0.25);
+    const longitudePadding = Math.max((maxLongitude - minLongitude) * 0.08, 0.25);
+    const south = minLatitude - latitudePadding;
+    const north = maxLatitude + latitudePadding;
+    const west = minLongitude - longitudePadding;
+    const east = maxLongitude + longitudePadding;
+
+    return {
+      project(latitude: number, longitude: number) {
+        return {
+          x: 60 + ((longitude - west) / Math.max(east - west, 0.001)) * 880,
+          y: 56 + ((north - latitude) / Math.max(north - south, 0.001)) * 400,
+        };
+      },
+      cityLabels: Array.from(new Set(hotspots.map((hotspot) => hotspot.city).filter((city): city is string => Boolean(city))))
+        .map((city) => {
+          const points = hotspots.filter((hotspot) => hotspot.city === city);
+          return {
+            city,
+            latitude: points.reduce((sum, point) => sum + point.latitude, 0) / points.length,
+            longitude: points.reduce((sum, point) => sum + point.longitude, 0) / points.length,
+          };
+        })
+        .slice(0, 14),
+    };
+  }, [hotspots, locatedReports]);
+
+  const selected = hotspots.find((hotspot) => hotspot.id === selectedId) ?? null;
+  if (!projection) {
+    return <EmptyState title="No located reports or predicted hotspots" description="The offline map will populate when location data arrives." />;
+  }
+
+  const gridLines = Array.from({ length: 7 }, (_, index) => 60 + index * 145);
+  return (
+    <div>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900">
+        <span><strong>Offline hotspot map</strong> · Google Maps key not configured; using the local demo view.</span>
+        <span>{hotspots.length} cells · {locatedReports.length} located reports</span>
+      </div>
+      <div className="relative h-[480px] overflow-hidden bg-slate-100">
+        <svg viewBox="0 0 1000 560" className="h-full w-full" role="img" aria-label="Offline map of predicted air quality hotspots and citizen reports">
+          <defs>
+            <pattern id="offline-map-grid" width="145" height="145" patternUnits="userSpaceOnUse">
+              <path d="M 145 0 L 0 0 0 145" fill="none" stroke="#cbd5e1" strokeWidth="1" opacity="0.65" />
+            </pattern>
+            <linearGradient id="offline-map-wash" x1="0" x2="1" y1="0" y2="1">
+              <stop offset="0" stopColor="#e0f2fe" />
+              <stop offset="1" stopColor="#f8fafc" />
+            </linearGradient>
+          </defs>
+          <rect width="1000" height="560" fill="url(#offline-map-wash)" />
+          <rect x="42" y="38" width="916" height="426" rx="18" fill="url(#offline-map-grid)" stroke="#94a3b8" strokeWidth="2" />
+          {gridLines.map((position) => <path key={`road-${position}`} d={`M ${position - 90} 38 C ${position + 30} 150, ${position - 20} 280, ${position + 100} 464`} fill="none" stroke="#ffffff" strokeWidth="5" opacity="0.8" />)}
+          {projection.cityLabels.map((label) => {
+            const point = projection.project(label.latitude, label.longitude);
+            return (
+              <g key={label.city}>
+                <circle cx={point.x} cy={point.y} r="4" fill="#334155" />
+                <text x={point.x + 8} y={point.y - 8} fill="#334155" fontSize="13" fontWeight="600">{label.city}</text>
+              </g>
+            );
+          })}
+          {locatedReports.map((report) => {
+            if (!report.location) {
+              return null;
+            }
+            const point = projection.project(report.location.latitude, report.location.longitude);
+            const color = report.estimatedAqi === null ? "#94a3b8" : bandForAqi(report.estimatedAqi).color;
+            return <circle key={`report-${report.id}`} cx={point.x} cy={point.y} r="3.5" fill={color} fillOpacity={report.status === "analyzed" ? 0.8 : 0.35} stroke="#ffffff" strokeWidth="1" />;
+          })}
+          {hotspots.map((hotspot) => {
+            const point = projection.project(hotspot.latitude, hotspot.longitude);
+            const band = bandForAqi(hotspot.predictedAqi);
+            const selectedHotspot = hotspot.id === selectedId;
+            const radius = 8 + Math.min(22, Math.sqrt(Math.max(hotspot.reportCount, 1)) * 2);
+            return (
+              <g
+                key={hotspot.id}
+                role="button"
+                tabIndex={0}
+                aria-label={`${hotspot.city ?? "Hotspot"}, predicted AQI ${Math.round(hotspot.predictedAqi)}`}
+                onClick={() => {
+                  setSelectedId(hotspot.id);
+                  onSelectHotspot?.(hotspot);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    setSelectedId(hotspot.id);
+                    onSelectHotspot?.(hotspot);
+                  }
+                }}
+                className="cursor-pointer"
+              >
+                <circle cx={point.x} cy={point.y} r={radius + (selectedHotspot ? 5 : 0)} fill={band.color} fillOpacity="0.18" stroke={selectedHotspot ? "#0f172a" : band.color} strokeWidth={selectedHotspot ? 3 : 1.5} />
+                <circle cx={point.x} cy={point.y} r="5" fill={band.color} stroke="#ffffff" strokeWidth="2" />
+                <text x={point.x + radius + 4} y={point.y + 4} fill="#0f172a" fontSize="11" fontWeight="700">{Math.round(hotspot.predictedAqi)}</text>
+              </g>
+            );
+          })}
+          <text x="60" y="520" fill="#64748b" fontSize="12">Derived from citizen reports · cells are geohash-5 forecasts</text>
+        </svg>
+        <div className="pointer-events-none absolute bottom-4 right-4 rounded-lg border border-slate-200 bg-white/95 px-3 py-2 text-xs text-slate-700 shadow-sm">
+          <p className="mb-1 font-semibold">Legend</p>
+          <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-[#7e0023]" /> Forecast hotspot</p>
+          <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-[#cc0033]" /> Citizen report</p>
+          <p className="mt-1 text-slate-500">Click a hotspot for evidence</p>
+        </div>
+      </div>
+      {selected ? (
+        <div className="border-t border-slate-200 bg-white px-5 py-3 text-sm">
+          <div className="flex flex-wrap items-center gap-3">
+            <strong>{selected.city ?? "Unnamed area"}</strong>
+            <span className="font-mono text-xs text-slate-500">{selected.geohash}</span>
+            <AqiBadge aqi={selected.predictedAqi} />
+            <span className="text-xs text-slate-600">{selected.reportCount} reports · {(selected.confidence * 100).toFixed(0)}% confidence</span>
+          </div>
+          <p className="mt-1 text-xs text-slate-600">Likely sources: {selected.dominantSources.map(labelForSource).join(", ") || "mixed local sources"}. Alert status: {selected.alertStatus.replace(/_/g, " ")}.</p>
+        </div>
+      ) : null}
+      <FallbackList hotspots={hotspots} threshold={threshold} />
+    </div>
+  );
+}
+
 export function HotspotMap({ hotspots, reports, loading, threshold, onSelectHotspot }: HotspotMapProps) {
   const [selected, setSelected] = useState<PredictedHotspot | null>(null);
   const [selectedReport, setSelectedReport] = useState<CitizenReport | null>(null);
@@ -126,14 +267,7 @@ export function HotspotMap({ hotspots, reports, loading, threshold, onSelectHots
   );
 
   if (!hasKey) {
-    return (
-      <div>
-        <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800">
-          NEXT_PUBLIC_GOOGLE_MAPS_API_KEY is not configured. Showing the hotspot list instead of the interactive map.
-        </div>
-        <FallbackList hotspots={hotspots} threshold={threshold} />
-      </div>
-    );
+    return <OfflineMap hotspots={hotspots} reports={reports} threshold={threshold} onSelectHotspot={onSelectHotspot} />;
   }
 
   if (loadError) {

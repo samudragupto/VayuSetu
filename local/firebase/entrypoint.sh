@@ -33,9 +33,13 @@ EXPORT_DIR="${EMULATOR_EXPORT_DIR:-/workspace/local/firebase/data}"
 
 cd /workspace
 
-if [ ! -d local/event-bridge/node_modules ]; then
+# The named node_modules volume is created as an empty directory on the first
+# run, so checking only for the directory makes the emulator skip installation
+# and Firebase then fails to load firebase-functions/v2/firestore. Check for the
+# package itself instead; this also repairs an interrupted first install.
+if [ ! -f local/event-bridge/node_modules/firebase-functions/package.json ]; then
   echo "[firebase] installing event bridge dependencies"
-  npm --prefix local/event-bridge install --no-audit --no-fund
+  npm --prefix local/event-bridge install --no-audit --no-fund --no-package-lock
 fi
 
 mkdir -p "${EXPORT_DIR}"

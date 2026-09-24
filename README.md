@@ -40,43 +40,76 @@ VayuSetu closes the gap with three ideas:
 
 ## Architecture
 
-```
- Citizen (WhatsApp)                                     Municipal authority
-        |  photo + location                                     ^ voice call (TTS) + WhatsApp
-        v                                                       |  in the authority's language
- +-------------------+    Twilio webhook    +--------------------------+
- |  Twilio WhatsApp  | -------------------> |  api-gateway (Cloud Run) |
- |  Business API     | <-- TwiML reply ---- |  Node.js 20 / Express    |
- +-------------------+                      +-----------+--------------+
-                                        1. create report doc | 2. upload image
-                                                             v
-                +---------------------+        +-------------------------------+
-                | Firestore (Native)  |<------ | Cloud Storage: citizen images |
-                | citizen_reports     |        +---------------+---------------+
-                | predicted_hotspots  |                        | object.finalized (Eventarc)
-                | alert_log, users    |                        v
-                +----+-----------+----+        +-------------------------------+
-    document.created |           |             | process_citizen_image (CF)    |
-                     v           |             | Gemini (Google AI Studio)     |
- +---------------------------+   |             | strict JSON schema, backoff   |
- | fetch_gee_metrics (CF)    |   |             +---------------+---------------+
- | Earth Engine: S5P AER_AI, |   |                             |
- | NO2, CO, SO2; MODIS AOD   |   |                             |
- +-------------+-------------+   |                             |
-               |                 |                             |
-               +---------> BigQuery: citizen_reports + satellite_metrics  <----+
-                           view fused_observations
-                                      |
-        Cloud Scheduler (hourly) ---> batch_predict (CF) ---> prediction-service (Cloud Run)
-                                      |   aggregate cells,      FastAPI + XGBoost
-                                      |   Open-Meteo weather    12 h AQI forecast
-                                      v
-                           Firestore predicted_hotspots ---- document.created ----> send_authority_alerts (CF)
-                                      |                                             Cloud Translation + Text-to-Speech
-                                      v                                             Twilio Voice + WhatsApp
-                    Next.js 14 dashboard (Firebase Hosting)
-                    Firebase Auth (Google, admin domain only)
-                    Google Maps JS API + Recharts, realtime Firestore
+```mermaid
+flowchart LR
+  citizen([Citizen on WhatsApp])
+  authority([Municipal authority])
+
+  subgraph intake["1 · Collect a local signal"]
+    twilio["Twilio WhatsApp"]
+    gateway["Cloud Run<br/>api-gateway"]
+    firestore[("Firestore")]
+    storage[("Cloud Storage")]
+    twilio -->|signed webhook| gateway
+    gateway -->|TwiML acknowledgement| citizen
+    gateway -->|report metadata| firestore
+    gateway -->|image + reportId| storage
+  end
+
+  citizen -->|photo + location| twilio
+  storage -->|object.finalized| vision["Cloud Function<br/>process_citizen_image"]
+  vision -->|structured image evidence| gemini["Gemini<br/>Google AI Studio"]
+  vision -->|analysis| firestore
+
+  subgraph context["2 · Add context"]
+    gee["Cloud Function<br/>fetch_gee_metrics"]
+    earth["Google Earth Engine<br/>Sentinel-5P + MODIS"]
+    gee -->|satellite metrics| firestore
+    gee --> earth
+  end
+  firestore -->|report created| gee
+
+  vision --> bq[("BigQuery<br/>fused observations")]
+  gee --> bq
+
+  subgraph forecast["3 · Forecast the next 12 hours"]
+    scheduler["Cloud Scheduler<br/>hourly"]
+    batch["Cloud Function<br/>batch_predict"]
+    weather["Open-Meteo<br/>weather context"]
+    prediction["Cloud Run<br/>FastAPI + XGBoost"]
+    scheduler --> batch
+    weather --> batch
+    batch -->|features| prediction
+    prediction -->|AQI + confidence| batch
+  end
+  bq --> batch
+  batch -->|predicted_hotspots| hotspots[("Firestore")]
+
+  subgraph response["4 · Make the decision actionable"]
+    alerts["Cloud Function<br/>send_authority_alerts"]
+    translation["Cloud Translation<br/>+ Text-to-Speech"]
+    outbound["Twilio Voice + WhatsApp"]
+    hotspots -->|document.created| alerts
+    alerts --> translation --> outbound --> authority
+  end
+
+  subgraph console["Authority console"]
+    auth["Firebase Auth<br/>verified admin domain"]
+    dashboard["Next.js dashboard<br/>Firebase Hosting"]
+    auth -. sign-in gate .-> dashboard
+    firestore --> dashboard
+    hotspots --> dashboard
+    alerts --> dashboard
+  end
+
+  classDef human fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e
+  classDef data fill:#ecfdf5,stroke:#059669,color:#064e3b
+  classDef ai fill:#fef3c7,stroke:#d97706,color:#78350f
+  classDef service fill:#eef2ff,stroke:#4f46e5,color:#312e81
+  class citizen,authority human
+  class firestore,storage,bq,hotspots data
+  class gemini,earth,prediction ai
+  class twilio,gateway,vision,gee,scheduler,batch,weather,alerts,translation,outbound,auth,dashboard service
 ```
 
 ### Request flow in detail
@@ -152,13 +185,24 @@ The whole pipeline runs on a laptop without Google Cloud credentials. Docker Com
 ### Prerequisites
 
 - Docker Desktop or Docker Engine 24+ with Compose v2
-- Node.js 20 and Python 3.10+ (for running tests and the data generator on the host)
+- Node.js 20 and Python 3.10–3.12 (for running tests and the data generator on the host; the pinned grpcio version does not provide a Python 3.13 wheel)
 
 ### Start the stack
 
 ```bash
-cp .env.example .env            # defaults are safe for local use
+cp .env.example .env            # keep the local emulator values documented below
 docker compose up --build       # first build takes a few minutes
+```
+
+The `gcs-init` one-shot service creates the configured citizen-image bucket in
+fake-gcs-server before the API gateway starts. This is important when `.env`
+contains a production-shaped bucket name from the template: the local emulator
+must have that exact bucket name or image uploads return HTTP 404. If you are
+updating an already-running stack, recreate the storage initializer and gateway
+once:
+
+```bash
+docker compose up -d --build --force-recreate gcs gcs-init api-gateway
 ```
 
 Build failures in this stack are almost always the network inside Docker Desktop,
@@ -201,16 +245,68 @@ Endpoints once everything is healthy:
 | http://localhost:8081/healthz | API gateway |
 | http://localhost:8090/docs | Prediction service (OpenAPI) |
 
+### Sign in locally
+
+The local Compose stack uses the reserved `example.com` domain so the Firebase
+Auth emulator can accept fabricated accounts. The Google sign-in popup can
+therefore use any verified-looking address ending in `@example.com`, including
+`raccoon.mountain.509@example.com`. The data generator writes the same domain to
+`config/access`, so the Firestore rules and dashboard stay in sync.
+
+If you copied an older `.env.example`, add the local-only override before restarting:
+
+```dotenv
+LOCAL_ADMIN_DOMAIN=example.com
+```
+
+The deployed `ADMIN_DOMAIN` remains the real verified Workspace domain (for example,
+`example.gov.in`); Docker Compose deliberately does not reuse it for emulator sign-in.
+
+Then recreate the dashboard and emulator containers without removing their
+volumes:
+
+```bash
+docker compose down
+docker compose up --build
+```
+
+If the emulator already contains a dataset seeded for another domain, reseed
+`config/access` as well:
+
+```powershell
+docker compose cp scripts/generate_mock_data.py fn-batch:/tmp/generate_mock_data.py
+docker compose exec -T fn-batch sh -c "PYTHONPATH=/app python /tmp/generate_mock_data.py --emulator-host firebase:8080 --project vayusetu-local --admin-domain example.com --reports 240 --hours 48 --alert-failure-rate 0 --clear"
+```
+
+`example.com` is an emulator-only default. Before deploying, replace it with the
+real, verified Google Workspace domain and never use the local bypass as a
+production access policy.
+
 ### Seed demo data
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt -r functions/common/requirements.txt google-cloud-firestore
 export FIRESTORE_EMULATOR_HOST=localhost:8080
-python scripts/generate_mock_data.py --reports 500 --hours 48 --clear
+python scripts/generate_mock_data.py --reports 500 --hours 48 --alert-failure-rate 0 --clear
 ```
 
-The generator creates 500 citizen reports, 80 pseudonymous citizens, periodic batch predictions, an escalating Delhi NCR smog event, matching authorities and a bilingual alert history. Add `--quiet-hours 3` before a live demonstration so that the next batch run produces fresh alerts that are not suppressed by the per-cell cooldown, and `--dry-run --json-out demo.json` to inspect the dataset without writing it. Sign in to the dashboard with any e-mail on `example.gov.in` (the Auth emulator accepts fabricated Google accounts) to explore the data.
+Keep the default failure rate at zero for a clean judging demo. To demonstrate
+resilience intentionally, rerun with a small value such as
+`--alert-failure-rate 0.05`; those synthetic Twilio failures are chaos-test data,
+not live delivery failures.
+
+On Windows, the host generator can be run inside the already-built `fn-batch`
+container instead of installing the pinned Python dependencies locally. This is
+particularly useful with Python 3.13, where the pinned `grpcio` version falls
+back to a native MSVC build:
+
+```powershell
+docker compose cp scripts/generate_mock_data.py fn-batch:/tmp/generate_mock_data.py
+docker compose exec -T fn-batch sh -c "PYTHONPATH=/app python /tmp/generate_mock_data.py --emulator-host firebase:8080 --project vayusetu-local --admin-domain example.com --reports 500 --hours 48 --quiet-hours 3 --clear"
+```
+
+The generator creates 500 citizen reports, 80 pseudonymous citizens, periodic batch predictions, an escalating Delhi NCR smog event, matching authorities and a bilingual alert history. Add `--quiet-hours 3` before a live demonstration so that the next batch run produces fresh alerts that are not suppressed by the per-cell cooldown, and `--dry-run --json-out demo.json` to inspect the dataset without writing it. With the local defaults, sign in to the dashboard with any e-mail on `example.com` (the Auth emulator accepts fabricated Google accounts) to explore the data.
 
 ### Send a WhatsApp message end-to-end
 
