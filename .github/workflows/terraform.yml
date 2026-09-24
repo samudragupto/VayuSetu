@@ -7,12 +7,14 @@ on:
       - "infrastructure/terraform/**"
       - ".github/workflows/terraform.yml"
       - "scripts/check_deploy_config.sh"
+      - "scripts/deployment_preflight.sh"
   pull_request:
     branches: [main]
     paths:
       - "infrastructure/terraform/**"
       - ".github/workflows/terraform.yml"
       - "scripts/check_deploy_config.sh"
+      - "scripts/deployment_preflight.sh"
   workflow_dispatch:
     inputs:
       action:
@@ -41,8 +43,32 @@ env:
   WORKING_DIR: infrastructure/terraform
 
 jobs:
+  # A checkout without cloud configuration is normal, so ask before planning and
+  # skip rather than fail. `terraform fmt -check` stays inside the gated job
+  # below: it needs no cloud access, but it does need a Terraform binary, so
+  # running it in a job that is skipped costs nothing and keeps one gate.
+  deployment-preflight:
+    name: Deployment preflight
+    runs-on: ubuntu-latest
+    outputs:
+      terraform: ${{ steps.check.outputs.terraform_configured }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Report whether Terraform is configured
+        id: check
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          ADMIN_DOMAIN: ${{ vars.ADMIN_DOMAIN }}
+        run: bash scripts/deployment_preflight.sh terraform
+
   terraform:
     name: Plan and apply
+    needs: deployment-preflight
+    if: needs.deployment-preflight.outputs.terraform == 'true'
     runs-on: ubuntu-latest
     environment: ${{ vars.ENVIRONMENT || 'dev' }}
     defaults:

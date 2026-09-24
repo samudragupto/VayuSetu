@@ -132,14 +132,49 @@ jobs:
         run: pytest "${{ matrix.component.path }}" -q
 
   # ---------------------------------------------------------------------------
-  # Deployments (main branch only)
+  # Deployment preflight
+  #
+  # Decides whether this repository has the Actions variables each deployment
+  # needs. A checkout without cloud configuration is normal (a fork, a fresh
+  # clone, a repository not yet bootstrapped with Terraform), so the deployment
+  # jobs are skipped rather than failed when the answer is no. Only real
+  # deployment errors turn a check red.
+  # ---------------------------------------------------------------------------
+  deployment-preflight:
+    name: Deployment preflight
+    runs-on: ubuntu-latest
+    outputs:
+      gateway: ${{ steps.check.outputs.gateway_configured }}
+      prediction: ${{ steps.check.outputs.prediction_configured }}
+      functions: ${{ steps.check.outputs.functions_configured }}
+      any: ${{ steps.check.outputs.any_configured }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Report which deployment targets are configured
+        id: check
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+          ARTIFACT_REGISTRY: ${{ vars.ARTIFACT_REGISTRY }}
+          ML_ARTIFACTS_BUCKET: ${{ vars.ML_ARTIFACTS_BUCKET }}
+          CITIZEN_IMAGES_BUCKET: ${{ vars.CITIZEN_IMAGES_BUCKET }}
+          ALERT_AUDIO_BUCKET: ${{ vars.ALERT_AUDIO_BUCKET }}
+          PREDICTION_SERVICE_URL: ${{ vars.PREDICTION_SERVICE_URL }}
+        run: bash scripts/deployment_preflight.sh gateway prediction functions
+
+  # ---------------------------------------------------------------------------
+  # Deployments (main branch only, and only where configuration exists)
   # ---------------------------------------------------------------------------
   deploy-gateway:
     name: Deploy API gateway (Cloud Run)
-    needs: [gateway-quality, python-quality]
+    needs: [deployment-preflight, gateway-quality, python-quality]
     if: |
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy == 'true')
+      needs.deployment-preflight.outputs.gateway == 'true' && (
+        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy == 'true')
+      )
     runs-on: ubuntu-latest
     environment: ${{ vars.ENVIRONMENT || 'dev' }}
     steps:
@@ -211,10 +246,12 @@ jobs:
 
   deploy-prediction-service:
     name: Deploy XGBoost prediction service (Cloud Run)
-    needs: [gateway-quality, python-quality]
+    needs: [deployment-preflight, gateway-quality, python-quality]
     if: |
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy == 'true')
+      needs.deployment-preflight.outputs.prediction == 'true' && (
+        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy == 'true')
+      )
     runs-on: ubuntu-latest
     environment: ${{ vars.ENVIRONMENT || 'dev' }}
     steps:
@@ -295,10 +332,12 @@ jobs:
 
   deploy-functions:
     name: Deploy Cloud Function (${{ matrix.function.name }})
-    needs: [gateway-quality, python-quality]
+    needs: [deployment-preflight, gateway-quality, python-quality]
     if: |
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy == 'true')
+      needs.deployment-preflight.outputs.functions == 'true' && (
+        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy == 'true')
+      )
     runs-on: ubuntu-latest
     environment: ${{ vars.ENVIRONMENT || 'dev' }}
     strategy:
@@ -488,20 +527,31 @@ jobs:
 
   deployment-summary:
     name: Deployment summary
-    needs: [deploy-gateway, deploy-prediction-service, deploy-functions]
+    needs: [deployment-preflight, deploy-gateway, deploy-prediction-service, deploy-functions]
     if: always() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     steps:
       - name: Summarise
+        env:
+          GATEWAY: ${{ needs.deploy-gateway.result }}
+          PREDICTION: ${{ needs.deploy-prediction-service.result }}
+          FUNCTIONS: ${{ needs.deploy-functions.result }}
         run: |
           {
             echo "## VayuSetu backend deployment"
             echo ""
             echo "| Component | Result |"
             echo "| --- | --- |"
-            echo "| API gateway | ${{ needs.deploy-gateway.result }} |"
-            echo "| Prediction service | ${{ needs.deploy-prediction-service.result }} |"
-            echo "| Cloud Functions | ${{ needs.deploy-functions.result }} |"
+            echo "| API gateway | ${GATEWAY} |"
+            echo "| Prediction service | ${PREDICTION} |"
+            echo "| Cloud Functions | ${FUNCTIONS} |"
+            echo ""
+            if [[ "${GATEWAY}" == "skipped" || "${PREDICTION}" == "skipped" || "${FUNCTIONS}" == "skipped" ]]; then
+              echo "A \`skipped\` result means the required Actions variables were absent,"
+              echo "not that a deployment failed; the preflight job above lists the missing"
+              echo "names. Populate them with \`terraform output github_repository_variables\`"
+              echo "and re-run - see [docs/BUILD_AND_DEPLOY.md](docs/BUILD_AND_DEPLOY.md)."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Fail summary when a deployment failed

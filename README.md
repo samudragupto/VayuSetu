@@ -23,8 +23,7 @@ Built for the Google Cloud **Build with AI: Code for Communities** hackathon (In
 11. [Security and privacy](#security-and-privacy)
 12. [Hackathon evaluation mapping](#hackathon-evaluation-mapping)
 13. [Operational notes and known limitations](#operational-notes-and-known-limitations)
-14. [Roadmap](#roadmap)
-15. [Licence](#licence)
+14. [Licence](#licence)
 
 ---
 
@@ -144,8 +143,9 @@ flowchart LR
 +-- ml/                         Feature engineering, synthetic data, training CLI, tests
 +-- frontend/                   Next.js 14 App Router dashboard (TypeScript, Tailwind, Google Maps, Recharts, Firebase Auth)
 +-- local/                      Firebase emulator image, event bridge, mock Twilio and mock Google AI Studio servers
-+-- scripts/                    stage_functions.sh (deployment packaging), generate_mock_data.py (demo data)
-+-- docs/                       DEMO_SCRIPT.md, PITCH_DECK.md
++-- scripts/                    stage_functions.sh (deployment packaging), generate_mock_data.py (demo data),
+                                deployment_preflight.sh and check_deploy_config.sh (deployment configuration gates)
++-- docs/                       BUILD_AND_DEPLOY.md, DEMO_SCRIPT.md, PITCH_DECK.md
 +-- docker-compose.yml          Full local stack
 +-- firebase.json               Emulator Suite, Hosting, Firestore rules and indexes
 +-- .env.example                Every environment variable, documented
@@ -172,7 +172,7 @@ VayuSetu was designed from the first line to run without a paid plan. Every mana
 | Messaging | Twilio WhatsApp sandbox and trial credit | Alerts are rate limited per authority with a three-hour cooldown per cell |
 | Hosting and auth | Firebase Hosting Spark plan and Firebase Authentication | Static export, no SSR, Google provider only |
 | Weather | Open-Meteo (free for non-commercial use, no key) | One call per 0.25 degree cell per run, cached |
-| CI/CD | GitHub Actions free minutes, Workload Identity Federation (no service account keys) | Path-filtered workflows, matrix builds |
+| CI/CD | GitHub Actions free minutes, Workload Identity Federation (no service account keys) | Path-filtered workflows, matrix builds, deployment preflight that skips rather than fails an unconfigured target |
 
 **Important:** Google Cloud requires a billing account to be *linked* before Cloud Run, Cloud Functions and Secret Manager can be enabled, even when usage stays inside the free tier. Linking an account does not incur charges by itself; VayuSetu's Terraform sets conservative `max_instances`, lifecycle rules and quotas so that a pilot deployment remains at zero cost. Budget alerts are recommended as a safety net.
 
@@ -286,7 +286,7 @@ production access policy.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements-dev.txt -r functions/common/requirements.txt google-cloud-firestore
+pip install -r requirements-dev.txt          # already includes functions/common/requirements.txt
 export FIRESTORE_EMULATOR_HOST=localhost:8080
 python scripts/generate_mock_data.py --reports 500 --hours 48 --alert-failure-rate 0 --clear
 ```
@@ -332,12 +332,19 @@ Sample media available on the mock server: `hazy_delhi.jpg`, `clear_bengaluru.jp
 ```bash
 # Python
 source .venv/bin/activate
-pip install -r requirements-dev.txt -r functions/common/requirements.txt \
-            -r functions/process_citizen_image/requirements.txt -r ml/requirements.txt \
-            -r services/prediction-service/requirements.txt
-python -m pytest functions services/prediction-service -q
-PYTHONPATH=ml python -m pytest ml -q
+pip install --prefer-binary -c functions/common/requirements.txt -r requirements-dev.txt \
+            -r ml/requirements.txt -r functions/process_citizen_image/requirements.txt \
+            -r functions/fetch_gee_metrics/requirements.txt -r functions/batch_predict/requirements.txt \
+            -r functions/send_authority_alerts/requirements.txt -r services/prediction-service/requirements.txt
+pip check
 ruff check functions ml services/prediction-service scripts
+# Run each component in its own process, as CI does: several functions define a
+# top-level `main` module, so one combined collection would collide.
+for component in functions/common functions/process_citizen_image functions/fetch_gee_metrics \
+                 functions/send_authority_alerts functions/batch_predict \
+                 services/prediction-service ml scripts/tests; do
+  pytest "$component" -q || exit 1
+done
 
 # API gateway
 cd services/api-gateway && npm ci && npm run lint && npm run typecheck && npm test
@@ -358,7 +365,8 @@ gcloud config set project vayusetu-prod
 gcloud services enable cloudresourcemanager.googleapis.com serviceusage.googleapis.com iam.googleapis.com storage.googleapis.com
 
 # Terraform remote state
-gsutil mb -l us-central1 gs://vayusetu-prod-tfstate && gsutil versioning set on gs://vayusetu-prod-tfstate
+gcloud storage buckets create gs://vayusetu-prod-tfstate --location=us-central1 --uniform-bucket-level-access
+gcloud storage buckets update gs://vayusetu-prod-tfstate --versioning
 
 # Register the project for Earth Engine (non-commercial): https://code.earthengine.google.com/register
 # Create a Google AI Studio API key: https://aistudio.google.com/app/apikey
@@ -389,15 +397,37 @@ Repository **variables** (from `terraform output github_repository_variables` pl
 
 Repository **secrets** (used only by the Terraform workflow to populate Secret Manager): `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_FROM`, `TWILIO_VOICE_FROM`, `GOOGLE_AI_STUDIO_API_KEY`, `PHONE_HASH_SECRET`.
 
+`terraform output github_repository_variables` prints the variables above as JSON;
+the runbook shows the `gh variable set` loop that loads them in one pass. These are
+non-secret configuration values, so they belong in *variables*, not secrets - the
+workflows read `vars.*`, and a similarly named secret will not satisfy them.
+
 No service account keys are stored anywhere; both deployment identities authenticate through Workload Identity Federation scoped to this repository.
+
+Each workflow starts with a **deployment preflight** job that checks whether the
+variables its deployment needs are present:
+
+- **All variables present** - the deployment job runs, and any failure is a real
+  failure.
+- **Any variable missing** - the deployment job is **skipped**, the preflight
+  reports the missing *names* (never values) as an annotation and in the run
+  summary, and the test jobs still run and report normally.
+
+That keeps an unbootstrapped project, a fork or a fresh clone green instead of red,
+without inventing a successful deployment. A skipped deployment is not a
+deployment: configure the variables, then re-run the workflow.
 
 ### 4. Workflows
 
 | Workflow | Trigger | What it does |
 | --- | --- | --- |
-| `terraform.yml` | Changes under `infrastructure/terraform`, manual | `fmt -check`, `init` against the GCS backend, `validate`, `plan` on pull requests (plan published as a pull request comment), `apply` on `main` or by manual dispatch, outputs exported as an artifact |
-| `backend-deploy.yml` | Changes under `services`, `functions`, `ml`, manual | ESLint, type check and Jest for the gateway; Ruff and pytest for every Python component; builds and pushes both containers to Artifact Registry; trains and uploads the XGBoost model when `ml/` changes; deploys both Cloud Run services and the four Cloud Functions (2nd gen) with their triggers and secrets; smoke tests the endpoints |
-| `frontend-deploy.yml` | Changes under `frontend`, manual | ESLint, type check, static export on every pull request; Firestore security rules and Firebase Hosting deployment on `main` |
+| `terraform.yml` | Changes under `infrastructure/terraform`, manual | After the preflight: `fmt -check`, `init` against the GCS backend, `validate`, `plan` on pull requests (published as a pull request comment), `apply` on `main` or by manual dispatch, outputs exported as an artifact |
+| `backend-deploy.yml` | Changes under `services`, `functions`, `ml`, manual | ESLint, type check and Jest for the gateway; Ruff and pytest for every Python component and the deployment regression tests; after the preflight, builds and pushes both containers to Artifact Registry, trains and uploads the XGBoost model when no published model exists, deploys both Cloud Run services and the four Cloud Functions (2nd gen) with their triggers and secrets, and smoke tests the endpoints |
+| `frontend-deploy.yml` | Changes under `frontend`, manual | ESLint, type check and static export on every pull request; after the preflight, Firestore security rules and Firebase Hosting deployment on `main` |
+
+The three workflows share `scripts/deployment_preflight.sh` (decides whether a
+deployment can run) and `scripts/check_deploy_config.sh` (the strict gate inside the
+deployment job itself). Both report variable *names* only, never values.
 
 ### 5. Connect Twilio and Firebase
 
@@ -464,9 +494,14 @@ curl -X POST https://<prediction-service>/model/reload -H "Authorization: Bearer
 | `functions/*`, `ml`, `services/prediction-service` | Ruff, pytest (87 tests) | Retry and backoff behaviour, geohash and AQI helpers, Gemini response validation and fallback chain, Earth Engine parsing and mock mode, alert composition and TwiML, batch aggregation and HTTP entry point, feature engineering, training and FastAPI contract |
 | `services/api-gateway` | ESLint (typescript-eslint), `tsc`, Jest + Supertest (26 tests) | Twilio signature validation, media handling, ordering of Firestore write before upload, per-citizen hourly report limits, localisation, health and read API endpoints |
 | `frontend` | ESLint (next/core-web-vitals), `tsc`, `next build` | Type safety and static export |
+| `scripts/tests` | pytest (52 tests) | Deployment preflight and strict configuration checks, workflow gating and shell syntax, shared dependency staging, real Eventarc and Google client imports |
 | `infrastructure/terraform` | `terraform fmt -check`, `terraform validate` (CI) | Configuration validity |
 
-Every workflow blocks deployment when a gate fails.
+Every workflow blocks deployment when a gate fails, and every deployment job is
+skipped - not failed - while the Google Cloud variables it needs are absent. A
+green run on an unconfigured checkout therefore never implies that a deployment
+happened: the preflight job lists exactly what is missing. See
+[Build and deployment](docs/BUILD_AND_DEPLOY.md).
 
 ## Security and privacy
 
@@ -484,7 +519,7 @@ Every workflow blocks deployment when a gate fails.
 | **Deep Google AI integration** | Gemini multimodal analysis with schema-constrained JSON (`functions/process_citizen_image`), Earth Engine satellite fusion (`functions/fetch_gee_metrics`), Cloud Translation and Text-to-Speech in ten languages (English and nine Indian languages) (`functions/send_authority_alerts`), custom XGBoost forecasting served on Cloud Run (`services/prediction-service`), Google Maps JavaScript API and Firebase Authentication in the dashboard |
 | **India-scale scalability** | Fully serverless with scale-to-zero; geohash cell aggregation bounds prediction cost to the number of active cells rather than reports; BigQuery partitioning handles years of national data; WhatsApp as the ingestion channel needs no app install; multilingual alerts by design |
 | **Deployability** | One `terraform apply`, three GitHub Actions workflows, Workload Identity Federation, containerised services, one-command local stack with emulators and mocks, comprehensive `.env.example` |
-| **Technical execution** | Typed code with structured logging in every component, exponential backoff and idempotency throughout, 113 automated tests, strict Firestore rules, least-privilege IAM, documented data model and cost analysis |
+| **Technical execution** | Typed code with structured logging in every component, exponential backoff and idempotency throughout, 165 automated tests, strict Firestore rules, least-privilege IAM, documented data model and cost analysis |
 | **Community impact** | Citizens receive an immediate, understandable analysis in their language; authorities receive actionable, localised forecasts before an episode peaks; all raw data flows into BigQuery for researchers |
 
 ## Operational notes and known limitations
@@ -495,14 +530,6 @@ Every workflow blocks deployment when a gate fails.
 - **Twilio sandbox.** The WhatsApp sandbox requires citizens to opt in with a join code and templates for business-initiated messages; a production WhatsApp Business account removes these limits.
 - **Free-tier quotas.** Gemini free tier daily request caps bound the number of images analysed per day per key. The design degrades gracefully (reports remain `received` and are retried by Eventarc) rather than failing.
 - **Terraform and Docker were not executed in the authoring environment**; configuration was validated structurally. Run `terraform validate` and `docker compose config` before first use.
-
-## Roadmap
-
-1. Join CPCB and SAFAR station data in BigQuery for continuous model retraining.
-2. Add Gemini-generated, citizen-facing health advisories tailored to reported activities.
-3. Publish an open API and Looker Studio dashboards for researchers.
-4. Extend authority routing with ward-level boundaries and escalation ladders.
-5. Regional expansion across BRICS cities where WhatsApp penetration is high and monitoring is sparse.
 
 ## Licence
 

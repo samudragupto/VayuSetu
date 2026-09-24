@@ -85,7 +85,7 @@ Right column, "VayuSetu":
 | Forecasting | XGBoost regressor, 35 features, MAE 25.7 AQI points and R2 0.92 on validation, 45 percent lower error than persistence |
 | Language | Cloud Translation and Text-to-Speech for authority alerts in English, Hindi, Bengali, Tamil, Telugu, Marathi, Gujarati, Kannada, Malayalam and Punjabi; citizen replies templated in English and Hindi with language preference stored per citizen |
 
-**Footer:** Every AI call is typed, retried, logged and tested: 113 automated tests across the repository.
+**Footer:** Every AI call is typed, retried, logged and tested: 165 automated tests across the repository.
 
 **Speaker notes:** Judges care about whether the AI is load-bearing or decorative. Here Gemini produces the primary features of the forecasting model and the citizen-facing reply; Earth Engine supplies the physical anchor; Translation and TTS are what make the output actionable for a district officer who may not read English.
 
@@ -147,6 +147,7 @@ For researchers:
 
 - `terraform apply` creates about 70 resources: APIs, buckets with lifecycle rules, Firestore with indexes and TTL, BigQuery dataset and schemas, Secret Manager, least-privilege service accounts, Cloud Run services, Cloud Scheduler and GitHub Workload Identity Federation
 - GitHub Actions: `terraform.yml` (plan on pull request, apply on main), `backend-deploy.yml` (lint, tests, containers, functions, smoke tests), `frontend-deploy.yml` (Next.js static export to Firebase Hosting)
+- An unconfigured checkout stays green: a deployment preflight skips the deployment jobs and names the missing variables instead of failing them, so tests remain the signal
 - No service account keys anywhere; deployments authenticate with OIDC
 - Local parity: `docker compose up` starts the Firebase Emulator Suite, a Cloud Storage emulator, mock Twilio, mock Google AI Studio, both services and all four functions
 - `generate_mock_data.py` seeds a realistic 48-hour episode for training, testing and demonstrations
