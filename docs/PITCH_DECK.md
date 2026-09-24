@@ -146,7 +146,7 @@ For researchers:
 **Body:**
 
 - `terraform apply` creates about 70 resources: APIs, buckets with lifecycle rules, Firestore with indexes and TTL, BigQuery dataset and schemas, Secret Manager, least-privilege service accounts, Cloud Run services, Cloud Scheduler and GitHub Workload Identity Federation
-- GitHub Actions: `terraform.yml` (format check always, plan on pull request, apply on main), `backend-deploy.yml` (lint, tests, containers, functions, smoke tests), `frontend-deploy.yml` (Next.js static export to Firebase Hosting)
+- GitHub Actions: `terraform.yml` (plan on pull request, apply on main), `backend-deploy.yml` (lint, tests, containers, functions, smoke tests), `frontend-deploy.yml` (Next.js static export to Firebase Hosting)
 - An unconfigured checkout stays green: a deployment preflight skips the deployment jobs and names the missing variables instead of failing them, so tests remain the signal
 - No service account keys anywhere; deployments authenticate with OIDC
 - Local parity: `docker compose up` starts the Firebase Emulator Suite, a Cloud Storage emulator, mock Twilio, mock Google AI Studio, both services and all four functions

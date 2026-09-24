@@ -421,7 +421,7 @@ deployment: configure the variables, then re-run the workflow.
 
 | Workflow | Trigger | What it does |
 | --- | --- | --- |
-| `terraform.yml` | Changes under `infrastructure/terraform`, manual | `fmt -check` (always, without cloud access), then after the preflight: `init` against the GCS backend, `validate`, `plan` on pull requests (published as a pull request comment), `apply` on `main` or by manual dispatch, outputs exported as an artifact |
+| `terraform.yml` | Changes under `infrastructure/terraform`, manual | After the preflight: `fmt -check`, `init` against the GCS backend, `validate`, `plan` on pull requests (published as a pull request comment), `apply` on `main` or by manual dispatch, outputs exported as an artifact |
 | `backend-deploy.yml` | Changes under `services`, `functions`, `ml`, manual | ESLint, type check and Jest for the gateway; Ruff and pytest for every Python component and the deployment regression tests; after the preflight, builds and pushes both containers to Artifact Registry, trains and uploads the XGBoost model when no published model exists, deploys both Cloud Run services and the four Cloud Functions (2nd gen) with their triggers and secrets, and smoke tests the endpoints |
 | `frontend-deploy.yml` | Changes under `frontend`, manual | ESLint, type check and static export on every pull request; after the preflight, Firestore security rules and Firebase Hosting deployment on `main` |
 

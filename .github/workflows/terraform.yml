@@ -43,27 +43,10 @@ env:
   WORKING_DIR: infrastructure/terraform
 
 jobs:
-  # Formatting needs no cloud access, so it keeps running everywhere, including
-  # pull requests from forks, and stays the real signal.
-  terraform-fmt:
-    name: Format check
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ${{ env.WORKING_DIR }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-          terraform_wrapper: false
-
-      - name: Terraform format check
-        run: terraform fmt -check -recursive -diff
-
   # A checkout without cloud configuration is normal, so ask before planning and
-  # skip rather than fail.
+  # skip rather than fail. `terraform fmt -check` stays inside the gated job
+  # below: it needs no cloud access, but it does need a Terraform binary, so
+  # running it in a job that is skipped costs nothing and keeps one gate.
   deployment-preflight:
     name: Deployment preflight
     runs-on: ubuntu-latest

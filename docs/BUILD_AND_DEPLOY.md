@@ -50,8 +50,8 @@ are all the variables it needs present?
 | All present | The deployment job runs. If it then fails, the check is red and the failure is real. |
 | Any missing | The deployment job is **skipped**. The preflight prints the missing *names* (never values) as a warning annotation plus a run-summary table, and links here. |
 
-The quality jobs - ESLint, type checks, Jest, Ruff, pytest, `terraform fmt` - always
-run and carry the real signal. Consequences worth stating plainly:
+The quality jobs - ESLint, type checks, Jest, Ruff and pytest - always run and carry
+the real signal. Consequences worth stating plainly:
 
 - A skipped deployment is **not** a deployment, and not a success. A green run on a
   repository without cloud configuration means "the code is fine and nothing was
@@ -382,6 +382,14 @@ terraform validate
 terraform plan -out=tfplan
 terraform apply tfplan
 ```
+
+> **Run `terraform fmt -recursive` before the first apply.** The README records that
+> Terraform was never executed while this repository was written, and a `terraform
+> fmt -check -recursive -diff` run against a current binary reports files that need
+> formatting (exit code 3). The gate sits near the top of the Terraform job, so an
+> unformatted tree fails there with the diff in the log before `plan` runs. Formatting
+> is a no-op for behaviour, so run the command, commit the result, and the check turns
+> green.
 
 If infrastructure already exists, use its existing remote state and matching
 configuration. Do not apply a fresh state over existing resources or create a second
