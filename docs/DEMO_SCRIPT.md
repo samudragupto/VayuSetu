@@ -10,8 +10,11 @@ Total running time: 4:00. Timings are cumulative. One presenter speaks; a second
    ```bash
    source .venv/bin/activate
    export FIRESTORE_EMULATOR_HOST=localhost:8080
-python scripts/generate_mock_data.py --reports 500 --hours 48 --quiet-hours 3 --alert-failure-rate 0 --admin-domain example.com --clear
+   python scripts/generate_mock_data.py --reports 500 --hours 48 --quiet-hours 3 \
+     --alert-failure-rate 0 --admin-domain example.com --clear
    ```
+
+   On Windows the same command runs inside the built `fn-batch` container; the README shows the `docker compose exec` form.
 
    `--quiet-hours 3` stops the simulated batch runs three hours before the present and records their alerts as already sent, so the live batch run in section 4 produces fresh hotspots whose alerts are not suppressed by the three-hour cooldown.
 

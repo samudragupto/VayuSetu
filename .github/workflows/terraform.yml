@@ -7,12 +7,14 @@ on:
       - "infrastructure/terraform/**"
       - ".github/workflows/terraform.yml"
       - "scripts/check_deploy_config.sh"
+      - "scripts/deployment_preflight.sh"
   pull_request:
     branches: [main]
     paths:
       - "infrastructure/terraform/**"
       - ".github/workflows/terraform.yml"
       - "scripts/check_deploy_config.sh"
+      - "scripts/deployment_preflight.sh"
   workflow_dispatch:
     inputs:
       action:
@@ -41,8 +43,49 @@ env:
   WORKING_DIR: infrastructure/terraform
 
 jobs:
+  # Formatting needs no cloud access, so it keeps running everywhere, including
+  # pull requests from forks, and stays the real signal.
+  terraform-fmt:
+    name: Format check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.WORKING_DIR }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform format check
+        run: terraform fmt -check -recursive -diff
+
+  # A checkout without cloud configuration is normal, so ask before planning and
+  # skip rather than fail.
+  deployment-preflight:
+    name: Deployment preflight
+    runs-on: ubuntu-latest
+    outputs:
+      terraform: ${{ steps.check.outputs.terraform_configured }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Report whether Terraform is configured
+        id: check
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          ADMIN_DOMAIN: ${{ vars.ADMIN_DOMAIN }}
+        run: bash scripts/deployment_preflight.sh terraform
+
   terraform:
     name: Plan and apply
+    needs: deployment-preflight
+    if: needs.deployment-preflight.outputs.terraform == 'true'
     runs-on: ubuntu-latest
     environment: ${{ vars.ENVIRONMENT || 'dev' }}
     defaults:

@@ -11,6 +11,7 @@ on:
       - "storage.rules"
       - ".github/workflows/frontend-deploy.yml"
       - "scripts/check_deploy_config.sh"
+      - "scripts/deployment_preflight.sh"
   pull_request:
     branches: [main]
     paths:
@@ -21,6 +22,7 @@ on:
       - "storage.rules"
       - ".github/workflows/frontend-deploy.yml"
       - "scripts/check_deploy_config.sh"
+      - "scripts/deployment_preflight.sh"
   workflow_dispatch:
 
 permissions:
@@ -83,12 +85,33 @@ jobs:
           path: frontend/out
           retention-days: 3
 
+  # A checkout without cloud configuration is normal, so ask before deploying and
+  # skip rather than fail. The build job above still runs everywhere and is the
+  # real signal on pull requests.
+  deployment-preflight:
+    name: Deployment preflight
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.check.outputs.frontend_configured }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Report whether the Firebase deployment is configured
+        id: check
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+        run: bash scripts/deployment_preflight.sh frontend
+
   deploy:
     name: Deploy to Firebase Hosting
-    needs: build
+    needs: [deployment-preflight, build]
     if: |
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      github.event_name == 'workflow_dispatch'
+      needs.deployment-preflight.outputs.frontend == 'true' && (
+        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+        github.event_name == 'workflow_dispatch'
+      )
     runs-on: ubuntu-latest
     environment: ${{ vars.ENVIRONMENT || 'dev' }}
     steps:
